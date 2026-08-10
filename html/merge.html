@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self'; script-src 'self'" />
+  <title>音视频合并 - FFGui</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <main class="view convert-view">
+    <header class="feature-header">
+      <button id="btn-back" class="btn-back" type="button">← 返回首页</button>
+      <h2>音视频合并</h2>
+    </header>
+
+    <!-- 拼接队列（支持拖入文件、拖动排序） -->
+    <section class="panel" id="file-panel">
+      <div class="panel-header">
+        <h3>拼接队列（拖动调整顺序）</h3>
+        <div class="panel-actions">
+          <button id="btn-add-files" class="btn" type="button">添加文件</button>
+          <button id="btn-clear-files" class="btn btn-plain" type="button">清空</button>
+        </div>
+      </div>
+      <ul id="file-list" class="file-list">
+        <li class="file-list-empty">尚未添加文件，点击「添加文件」或将音视频文件拖拽到此处</li>
+      </ul>
+      <p class="merge-tip">提示：队列为纯音频时只输出音频；队列中含视频时，音频文件会以黑屏画面合并进视频。</p>
+    </section>
+
+    <!-- 输出设置 -->
+    <section class="panel">
+      <div class="panel-header"><h3>输出设置</h3></div>
+      <div class="form-grid">
+        <label class="form-item">
+          <span class="form-label">输出格式</span>
+          <select id="sel-format"></select>
+        </label>
+        <label class="form-item">
+          <span class="form-label">输出目录</span>
+          <span class="dir-picker">
+            <input id="input-outdir" type="text" readonly placeholder="与第一个文件相同" />
+            <button id="btn-pick-dir" class="btn" type="button">浏览…</button>
+          </span>
+        </label>
+      </div>
+      <p class="caps-info">合并采用重编码方式拼接，不同格式/分辨率的文件可直接混合；视频段会统一缩放到第一个视频的分辨率。</p>
+    </section>
+
+    <!-- 进度与操作 -->
+    <section class="panel">
+      <div class="convert-actions">
+        <button id="btn-start" class="btn btn-primary" type="button" disabled>开始合并</button>
+        <button id="btn-cancel" class="btn btn-danger hidden" type="button">取消</button>
+        <span id="status-text" class="status-text"></span>
+      </div>
+      <div class="progress-track">
+        <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+      </div>
+      <pre id="log-area" class="log-area hidden"></pre>
+    </section>
+  </main>
+
+  <script src="js/merge.js"></script>
+</body>
+</html>

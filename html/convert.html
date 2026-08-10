@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self'; script-src 'self'" />
+  <title>音视频转码 - FFGui</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <main class="view convert-view">
+    <header class="feature-header">
+      <button id="btn-back" class="btn-back" type="button">← 返回首页</button>
+      <h2>音视频转码</h2>
+    </header>
+
+    <!-- 能力加载中 -->
+    <section id="caps-loading" class="feature-placeholder">
+      <p>正在检测 ffmpeg 能力（硬件加速 / 编码器 / 封装格式）…</p>
+    </section>
+
+    <div id="convert-body" class="hidden">
+      <!-- 文件列表（支持拖拽添加） -->
+      <section class="panel" id="file-panel">
+        <div class="panel-header">
+          <h3>源文件</h3>
+          <div class="panel-actions">
+            <button id="btn-add-files" class="btn" type="button">添加文件</button>
+            <button id="btn-clear-files" class="btn btn-plain" type="button">清空</button>
+          </div>
+        </div>
+        <ul id="file-list" class="file-list">
+          <li class="file-list-empty">尚未添加文件，点击「添加文件」或将音视频文件拖拽到此处</li>
+        </ul>
+      </section>
+
+      <!-- 转换参数 -->
+      <section class="panel">
+        <div class="panel-header">
+          <h3>输出设置</h3>
+          <button id="btn-advanced" class="btn" type="button">高级参数…</button>
+        </div>
+        <div class="form-grid settings-grid">
+          <label class="form-item">
+            <span class="form-label">输出格式</span>
+            <select id="sel-format"></select>
+          </label>
+          <label class="form-item" id="item-quality">
+            <span class="form-label">质量</span>
+            <select id="sel-quality">
+              <option value="high">高质量</option>
+              <option value="medium" selected>标准</option>
+              <option value="low">小体积</option>
+            </select>
+          </label>
+          <label class="form-item" id="item-acodec">
+            <span class="form-label">音频编码</span>
+            <select id="sel-acodec"></select>
+          </label>
+          <label class="form-item">
+            <span class="form-label">硬件加速（解码）</span>
+            <select id="sel-hwaccel"></select>
+          </label>
+          <label class="form-item" id="item-vcodec">
+            <span class="form-label">视频编码</span>
+            <select id="sel-vcodec"></select>
+          </label>
+          <label class="form-item" id="item-hdr2sdr">
+            <span class="form-label">动态范围</span>
+            <span class="check-line">
+              <input id="chk-hdr2sdr" type="checkbox" />
+              HDR 转 SDR（色调映射）
+            </span>
+          </label>
+          <label class="form-item form-item-dir">
+            <span class="form-label">输出目录</span>
+            <span class="dir-picker">
+              <input id="input-outdir" type="text" readonly placeholder="与源文件相同" />
+              <button id="btn-pick-dir" class="btn" type="button">浏览…</button>
+            </span>
+          </label>
+        </div>
+        <p id="caps-info" class="caps-info"></p>
+      </section>
+
+      <!-- 进度与操作 -->
+      <section class="panel">
+        <div class="convert-actions">
+          <button id="btn-start" class="btn btn-primary" type="button" disabled>开始转换</button>
+          <button id="btn-cancel" class="btn btn-danger hidden" type="button">取消</button>
+          <span id="status-text" class="status-text"></span>
+        </div>
+        <div class="progress-track">
+          <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+        </div>
+        <pre id="log-area" class="log-area hidden"></pre>
+      </section>
+    </div>
+  </main>
+
+  <!-- 高级参数弹窗：留空则不传入对应参数，由 ffmpeg 使用默认值 -->
+  <div id="advanced-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>高级参数</h3>
+        <button id="btn-advanced-close" class="modal-close" type="button" title="关闭">×</button>
+      </div>
+      <div class="form-grid">
+        <label class="form-item">
+          <span class="form-label">视频码率（kbps，留空按质量档）</span>
+          <input id="input-vbitrate" type="number" min="0" step="100" placeholder="如 2000" />
+        </label>
+        <label class="form-item">
+          <span class="form-label">视频码率模式</span>
+          <select id="sel-vratemode">
+            <option value="vbr">VBR（可变码率）</option>
+            <option value="cbr">CBR（固定码率）</option>
+          </select>
+        </label>
+        <label class="form-item">
+          <span class="form-label">音频码率（kbps，留空默认）</span>
+          <input id="input-abitrate" type="number" min="0" step="32" placeholder="如 128" />
+        </label>
+        <label class="form-item">
+          <span class="form-label">分辨率（宽x高 或百分比，默认 100%）</span>
+          <input id="input-scale" type="text" placeholder="如 1280x720 或 50%" />
+        </label>
+      </div>
+      <p class="modal-tip">以上参数留空则不会传给 ffmpeg，由其使用默认值。</p>
+      <div class="modal-footer">
+        <button id="btn-advanced-ok" class="btn btn-primary" type="button">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/convert.js"></script>
+</body>
+</html>

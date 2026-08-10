@@ -20,7 +20,13 @@ jobs:
       - name: 下载 ffmpeg 并放入 bin/
         shell: pwsh
         run: |
-          curl.exe -L -o ffmpeg.7z https://www.gyan.dev/ffmpeg/builds/ffmpeg-git-full.7z
+          # gyan.dev 直链在 CI 上会被反爬拦截（GET 返回 HTML 而非压缩包），
+          # 改走其官方 GitHub 镜像 GyanD/codexffmpeg 的最新 release
+          $rel = Invoke-RestMethod 'https://api.github.com/repos/GyanD/codexffmpeg/releases/latest'
+          $asset = $rel.assets | Where-Object { $_.name -match 'full_build\.7z$' } | Select-Object -First 1
+          if (-not $asset) { throw 'codexffmpeg 最新 release 中未找到 full_build.7z' }
+          Write-Host "下载 $($asset.name)"
+          curl.exe -L -o ffmpeg.7z $asset.browser_download_url
           7z x ffmpeg.7z | Out-Null
           $exe = Get-ChildItem -Recurse -Filter ffmpeg.exe |
             Where-Object { $_.FullName -like '*bin*' } | Select-Object -First 1

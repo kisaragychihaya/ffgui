@@ -27,7 +27,8 @@ jobs:
           if (-not $exe) { throw '压缩包中未找到 ffmpeg.exe' }
           New-Item -ItemType Directory -Force bin | Out-Null
           Copy-Item $exe.FullName bin/ffmpeg.exe
-          bin/ffmpeg.exe -version | Select-Object -First 1
+          # PowerShell 执行相对路径程序必须带 .\
+          .\bin\ffmpeg.exe -version | Select-Object -First 1
 
       - name: 安装依赖
         run: npm ci

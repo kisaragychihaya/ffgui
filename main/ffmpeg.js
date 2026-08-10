@@ -199,6 +199,19 @@ const VIDEO_ONLY_FORMATS = new Set(['gif']);
 // 支持 -crf 质量参数的编码器
 const CRF_ENCODERS = new Set(['libx264', 'libx265', 'libvpx-vp9', 'libaom-av1', 'libsvtav1']);
 const CRF_MAP = { high: 18, medium: 23, low: 28 };
+// VideoToolbox 不支持 -crf；Apple Silicon 上可用 -q:v（1-100，数值越大质量越高）
+// Intel Mac 上传 -q:v 会直接报错（ffmpeg 源码 videotoolboxenc.c 限定 TARGET_CPU_ARM64），
+// 因此仅在 darwin + arm64 下使用；其余平台码率留空时完全交给编码器默认值
+const VT_QSCALE_MAP = { high: 80, medium: 65, low: 50 };
+const VT_ENCODER_PATTERN = /_videotoolbox$/;
+// nvenc/qsv/amf 的恒定画质参数（码率留空时按质量档传入，数值越小质量越高，语义同 QP/CRF）
+// nvenc 用 VBR + -cq；qsv 用 -global_quality（ICQ 模式）；amf 用 QVBR + -qvbr_quality_level
+const HW_QUALITY_ARGS = {
+  nvenc: (q) => ['-rc', 'vbr', '-cq', String(q)],
+  qsv: (q) => ['-global_quality', String(q)],
+  amf: (q) => ['-rc', 'qvbr', '-qvbr_quality_level', String(q)],
+};
+const HW_QUALITY_PATTERN = /_(nvenc|qsv|amf)$/;
 
 let currentChild = null;
 let cancelled = false;
@@ -245,6 +258,14 @@ function buildArgs(job, input, outPath) {
         // vbr：仅 -b:v，由编码器自行做可变码率
       } else if (CRF_ENCODERS.has(job.vcodec)) {
         args.push('-crf', String(CRF_MAP[job.quality] ?? CRF_MAP.medium));
+      } else if (VT_ENCODER_PATTERN.test(job.vcodec) &&
+                 process.platform === 'darwin' && process.arch === 'arm64') {
+        args.push('-q:v', String(VT_QSCALE_MAP[job.quality] ?? VT_QSCALE_MAP.medium));
+      } else {
+        const hwMatch = job.vcodec.match(HW_QUALITY_PATTERN);
+        if (hwMatch) {
+          args.push(...HW_QUALITY_ARGS[hwMatch[1]](CRF_MAP[job.quality] ?? CRF_MAP.medium));
+        }
       }
     }
   } else if (vbitrate > 0) {

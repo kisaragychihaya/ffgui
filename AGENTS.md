@@ -31,7 +31,13 @@ main/ffmpeg.js      主进程核心：
                     - 转码任务：spawn ffmpeg，参数含 -nostats -progress pipe:1，
                       解析 stdout 的 key=value 进度块，通过 'ffgui:convert-event'
                       推送 file-start / progress / file-done / file-error 事件
-                      （spawn/日志/进度解析封装在 runFfmpegTask，转码与合并共用）
+                      （spawn/日志/进度解析封装在 runFfmpegTask，转码与合并共用）；
+                      质量档仅对 CRF_ENCODERS 传 -crf；VideoToolbox 编码器不支持
+                      -crf，在 darwin+arm64 下改传 -q:v（VT_QSCALE_MAP），Intel Mac
+                      传 -q:v 会报错故留空走编码器默认值；nvenc/qsv/amf 码率留空时
+                      按质量档传恒定画质参数（HW_QUALITY_ARGS：nvenc 用 -rc vbr -cq、
+                      qsv 用 -global_quality、amf 用 -rc qvbr -qvbr_quality_level，
+                      数值复用 CRF_MAP，越小质量越高；amf 参数未在真机验证过）
                     - 合并任务：probeFile 用 ffmpeg -i 的 stderr 探测流信息（时长/
                       有无音视频流/分辨率，attached pic 封面不算视频流）；混合队列用
                       concat filter 重编码拼接，纯音频段生成等长黑屏（color 源）、

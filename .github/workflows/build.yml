@@ -1,9 +1,11 @@
 name: 打包产物
 
 on:
-  push:
-    branches: [master]
+  # 手动触发（Actions 页面 → 打包产物 → Run workflow）
   workflow_dispatch:
+  # 发布 Release 时触发
+  release:
+    types: [published]
 
 jobs:
   windows:

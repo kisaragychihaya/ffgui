@@ -1,0 +1,73 @@
+name: 打包产物
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 下载 ffmpeg 并放入 bin/
+        shell: pwsh
+        run: |
+          curl.exe -L -o ffmpeg.7z https://www.gyan.dev/ffmpeg/builds/ffmpeg-git-full.7z
+          7z x ffmpeg.7z | Out-Null
+          $exe = Get-ChildItem -Recurse -Filter ffmpeg.exe |
+            Where-Object { $_.FullName -like '*bin*' } | Select-Object -First 1
+          if (-not $exe) { throw '压缩包中未找到 ffmpeg.exe' }
+          New-Item -ItemType Directory -Force bin | Out-Null
+          Copy-Item $exe.FullName bin/ffmpeg.exe
+          bin/ffmpeg.exe -version | Select-Object -First 1
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 打包
+        run: npm run package
+
+      - name: 压缩产物
+        shell: pwsh
+        run: 7z a FFGui-windows-x64.7z ./out/FFGui-win32-x64 | Out-Null
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFGui-windows-x64
+          path: FFGui-windows-x64.7z
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 安装依赖
+        run: npm ci
+
+      # macOS 使用系统 ffmpeg（brew install ffmpeg），不内置二进制，直接打包
+      - name: 打包
+        run: npm run package
+
+      - name: 压缩产物
+        run: ditto -c -k --sequesterRsrc --keepParent out/FFGui-darwin-arm64/FFGui.app FFGui-macos-arm64.zip
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFGui-macos-arm64
+          path: FFGui-macos-arm64.zip

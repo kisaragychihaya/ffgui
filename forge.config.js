@@ -59,6 +59,8 @@ module.exports = {
 
   packagerConfig: {
     asar: true,
+    // CI 无 Apple 开发者证书，macOS 打包跳过签名（本地有证书可移除此项自动签名）
+    osxSign: { identity: null },
     // Windows 内置 bin/ffmpeg.exe 是独立可执行文件，无法从 asar 内 spawn，
     // 作为额外资源复制到 resources/bin/（main/ffmpeg.js 中会区分开发/打包路径）；
     // macOS / Linux 使用系统 ffmpeg（Homebrew 等），不携带 bin/

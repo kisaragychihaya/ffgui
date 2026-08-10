@@ -7,6 +7,10 @@ on:
   release:
     types: [published]
 
+# Release 触发时上传产物到 Release Assets 需要写权限
+permissions:
+  contents: write
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -54,6 +58,12 @@ jobs:
           name: FFGui-windows-x64
           path: FFGui-windows-x64.7z
 
+      - name: 上传到 Release（仅 Release 触发时）
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: FFGui-windows-x64.7z
+
   macos:
     runs-on: macos-latest
     steps:
@@ -80,3 +90,9 @@ jobs:
         with:
           name: FFGui-macos-arm64
           path: FFGui-macos-arm64.zip
+
+      - name: 上传到 Release（仅 Release 触发时）
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: FFGui-macos-arm64.zip

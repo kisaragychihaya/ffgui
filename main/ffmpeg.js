@@ -13,7 +13,12 @@ function getFfmpegPath() {
     return path.join(base, 'bin', 'ffmpeg.exe');
   }
   if (process.platform === 'darwin') {
-    // Apple Silicon 为 /opt/homebrew，Intel 为 /usr/local
+    // 优先使用内置的预编译 ffmpeg（bin/bin/ffmpeg，动态库在 bin/lib/，
+    // 引用 @executable_path/../lib，相对布局不能变；打包后位于 resources/bin/ 下）
+    const base = app.isPackaged ? process.resourcesPath : app.getAppPath();
+    const bundled = path.join(base, 'bin', 'bin', 'ffmpeg');
+    if (fs.existsSync(bundled)) return bundled;
+    // 未内置时回退到 Homebrew：Apple Silicon 为 /opt/homebrew，Intel 为 /usr/local
     const candidates = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg'];
     for (const p of candidates) {
       if (fs.existsSync(p)) return p;
@@ -162,7 +167,7 @@ async function detectCapabilities() {
 }
 
 // 缓存结构版本：解析逻辑变化时递增，使旧缓存自动失效
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 
 // 首次启动生成缓存；之后版本一致则直接读缓存
 async function getCapabilities() {
@@ -201,9 +206,11 @@ const CRF_ENCODERS = new Set(['libx264', 'libx265', 'libvpx-vp9', 'libaom-av1', 
 const CRF_MAP = { high: 18, medium: 23, low: 28 };
 // VideoToolbox 不支持 -crf；Apple Silicon 上可用 -q:v（1-100，数值越大质量越高）
 // Intel Mac 上传 -q:v 会直接报错（ffmpeg 源码 videotoolboxenc.c 限定 TARGET_CPU_ARM64），
-// 因此仅在 darwin + arm64 下使用；其余平台码率留空时完全交给编码器默认值
+// 因此仅在 darwin + arm64 下使用；其余平台码率留空时完全交给编码器默认值。
+// 仅 h264/hevc 映射 -q:v：ProRes 的画质由 -profile:v 档位决定，且 ffmpeg 源码中
+// ProRes 明确不走码率/质量属性分支，传 -q:v 行为未验证，故排除
 const VT_QSCALE_MAP = { high: 80, medium: 65, low: 50 };
-const VT_ENCODER_PATTERN = /_videotoolbox$/;
+const VT_ENCODER_PATTERN = /^(h264|hevc)_videotoolbox$/;
 // nvenc/qsv/amf 的恒定画质参数（码率留空时按质量档传入，数值越小质量越高，语义同 QP/CRF）
 // nvenc 用 VBR + -cq；qsv 用 -global_quality（ICQ 模式）；amf 用 QVBR + -qvbr_quality_level
 const HW_QUALITY_ARGS = {

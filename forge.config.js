@@ -61,10 +61,10 @@ module.exports = {
     asar: true,
     // 不配置 osxSign：electron-packager 默认不签名（CI 无 Apple 证书也可正常打包）。
     // 注意 Forge 配置中不能出现 null 值（proxify 会崩溃），osxSign: { identity: null } 不可用。
-    // Windows 内置 bin/ffmpeg.exe 是独立可执行文件，无法从 asar 内 spawn，
-    // 作为额外资源复制到 resources/bin/（main/ffmpeg.js 中会区分开发/打包路径）；
-    // macOS / Linux 使用系统 ffmpeg（Homebrew 等），不携带 bin/
-    extraResource: process.platform === 'win32' ? ['./bin/'] : [],
+    // 内置 bin/ffmpeg.exe（Windows）/ bin/ffmpeg（macOS）是独立可执行文件，
+    // 无法从 asar 内 spawn，作为额外资源复制到 resources/bin/
+    // （main/ffmpeg.js 中会区分开发/打包路径）；Linux 使用系统 ffmpeg，不携带 bin/
+    extraResource: process.platform === 'linux' ? [] : ['./bin/'],
     ignore: [
       /^\/out($|\/)/,
       /^\/test_media($|\/)/,

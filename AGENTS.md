@@ -33,8 +33,9 @@ main/ffmpeg.js      主进程核心：
                       推送 file-start / progress / file-done / file-error 事件
                       （spawn/日志/进度解析封装在 runFfmpegTask，转码与合并共用）；
                       质量档仅对 CRF_ENCODERS 传 -crf；VideoToolbox 编码器不支持
-                      -crf，在 darwin+arm64 下改传 -q:v（VT_QSCALE_MAP），Intel Mac
-                      传 -q:v 会报错故留空走编码器默认值；nvenc/qsv/amf 码率留空时
+                      -crf，在 darwin+arm64 下改传 -q:v（VT_QSCALE_MAP，仅
+                      h264/hevc_videotoolbox，ProRes 画质由 profile 决定故排除），
+                      Intel Mac 传 -q:v 会报错故留空走编码器默认值；nvenc/qsv/amf 码率留空时
                       按质量档传恒定画质参数（HW_QUALITY_ARGS：nvenc 用 -rc vbr -cq、
                       qsv 用 -global_quality、amf 用 -rc qvbr -qvbr_quality_level，
                       数值复用 CRF_MAP，越小质量越高；amf 参数未在真机验证过）
@@ -56,12 +57,19 @@ html/js/convert.js  转码页全部逻辑：候选格式/编码器清单是硬�
                     探测到的真实能力过滤后填充下拉框
 html/js/merge.js    合并页全部逻辑
 html/css/style.css  全部页面共用样式
-bin/ffmpeg.exe      内置的 ffmpeg 可执行文件（仅 Windows）；开发时从项目根 bin/ 加载，
-                    打包时经 extraResource 复制到 resources/bin/（main/ffmpeg.js 的
-                    getFfmpegPath 按 app.isPackaged 区分两条路径）。
-                    macOS 不内置 ffmpeg，使用 Homebrew 安装的系统 ffmpeg
-                    （依次探测 /opt/homebrew/bin/ffmpeg、/usr/local/bin/ffmpeg、PATH；
-                    未安装时提示 brew install ffmpeg）；Linux 走系统 PATH 的 ffmpeg
+bin/ffmpeg.exe      内置的 ffmpeg：Windows 为 bin/ffmpeg.exe，macOS 为 bin/bin/ffmpeg
+bin/bin/ bin/lib/   + bin/lib/（自建预编译构建，来自 kisaragychihaya/ffmpeg_build_mac
+                    的 release；tar.gz 解压出的 bin/ 与 lib/ 原样放入项目 bin/ 下。
+                    该构建是动态链接的：dylibbundler 收集依赖到 lib/，二进制引用
+                    @executable_path/../lib，bin/ 与 lib/ 相对布局不能变，只拷
+                    ffmpeg 单文件无法运行）。开发时从项目根 bin/ 加载，打包时经
+                    extraResource 复制到 resources/bin/（main/ffmpeg.js 的
+                    getFfmpegPath 按 app.isPackaged 区分两条路径）；mac 未内置时
+                    回退 Homebrew（依次探测 /opt/homebrew/bin/ffmpeg、
+                    /usr/local/bin/ffmpeg、PATH；未安装时提示 brew install ffmpeg）；
+                    Homebrew 官方源 ffmpeg 无 zimg（缺 zscale 滤镜），HDR 转 SDR
+                    需要带 zimg 的构建（自建构建已含 --with-zimg，可用）。
+                    Linux 走系统 PATH 的 ffmpeg
 test_media/         手工测试用的示例音视频文件（不进入安装包）
 forge.config.js     Electron Forge 配置
 ```
@@ -97,7 +105,7 @@ forge.config.js     Electron Forge 配置
   准备 `assets/imgs/favicon.ico`（或 .png/.icns）后在 `forge.config.js` 中配置
 - 打包体积较大：`bin/ffmpeg.exe` 约 110MB，经 `extraResource` 原样分发且不进 asar，
   `packagerConfig.ignore` 中的 `/^\/bin($|\/)/` 规则不要删除，否则 asar 里会再塞一份；
-  `extraResource` 按构建平台条件配置，仅在 Windows 携带 `bin/`
+  `extraResource` 按构建平台条件配置，Windows / macOS 携带 `bin/`，Linux 不携带
 - `package.json` 中 `allowScripts` 字段是非 npm 标准字段（模板残留），当前无实际作用
 
 ## 测试方式

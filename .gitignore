@@ -4,6 +4,9 @@ out/
 
 # 内置 ffmpeg 二进制（体积过大不进仓库，请按 bin/README.md 自行下载放置）
 /bin/ffmpeg.exe
+# macOS 自建构建（tar.gz 解压出的 bin/ 与 lib/ 原样放入本目录）
+/bin/bin/
+/bin/lib/
 
 # 手工测试用的示例媒体文件
 test_media/

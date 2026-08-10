@@ -75,10 +75,28 @@ jobs:
         with:
           node-version: 22
 
+      - name: 下载预编译 ffmpeg 并放入 bin/
+        run: |
+          set -e
+          # 自建 macOS ffmpeg（kisaragychihaya/ffmpeg_build_mac 最新 release）：
+          # tar.gz 内含 bin/(ffmpeg/ffprobe/ffplay) + lib/(dylibbundler 收集的依赖)，
+          # 二进制经 @executable_path/../lib 引用动态库，bin/ 与 lib/ 相对布局不能变，
+          # 因此两个目录原样放入项目 bin/ 下（bin/bin/ffmpeg + bin/lib/）
+          url=$(curl -s https://api.github.com/repos/kisaragychihaya/ffmpeg_build_mac/releases/latest \
+            | node -e "const r=JSON.parse(require('fs').readFileSync(0,'utf8'));const a=(r.assets||[]).find(x=>/macos-arm64\.tar\.gz$/.test(x.name));process.stdout.write(a?a.browser_download_url:'')")
+          if [ -z "$url" ]; then echo 'ffmpeg_build_mac 最新 release 中未找到 macos-arm64 tar.gz'; exit 1; fi
+          echo "下载 $url"
+          curl -L -o ffmac.tar.gz "$url"
+          mkdir -p ffmac
+          tar xzf ffmac.tar.gz -C ffmac
+          mkdir -p bin
+          cp -R ffmac/bin ffmac/lib bin/
+          chmod +x bin/bin/ffmpeg
+          ./bin/bin/ffmpeg -version | head -1
+
       - name: 安装依赖
         run: npm ci
 
-      # macOS 使用系统 ffmpeg（brew install ffmpeg），不内置二进制，直接打包
       - name: 打包
         run: npm run package
 

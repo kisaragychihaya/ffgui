@@ -53,6 +53,7 @@
     { value: 'wmv2', label: 'WMV2 (Windows Media Video 8)' },
     { value: 'mpeg2video', label: 'MPEG-2（DVD）' },
     { value: 'prores_ks', label: 'ProRes（剪辑用）' },
+    { value: 'prores_videotoolbox', label: 'ProRes (VideoToolbox)' },
     { value: 'mpeg4', label: 'MPEG-4' },
     { value: 'none', label: '无视频（提取音频）' },
   ];
@@ -61,6 +62,7 @@
     { value: 'auto', label: '自动（按容器默认）' },
     { value: 'copy', label: '直接复制（不重编码）' },
     { value: 'aac', label: 'AAC' },
+    { value: 'aac_at', label: 'AAC (AudioToolbox，Mac 硬件)' },
     { value: 'libmp3lame', label: 'MP3 (LAME)' },
     { value: 'libopus', label: 'Opus' },
     { value: 'libvorbis', label: 'Vorbis' },

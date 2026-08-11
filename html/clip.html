@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <!-- 媒体源放行 file:/blob:，用于 <video> 播放本地音视频 -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self'; script-src 'self'; media-src 'self' blob: file:" />
+  <title>音视频截取 - FFGui</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <main class="view clip-view">
+    <header class="feature-header">
+      <button id="btn-back" class="btn-back" type="button">← 返回首页</button>
+      <h2>音视频截取</h2>
+    </header>
+
+    <!-- 文件区（支持拖拽） -->
+    <section class="panel" id="file-panel">
+      <div class="panel-header">
+        <h3>源文件</h3>
+        <div class="panel-actions">
+          <button id="btn-pick-file" class="btn" type="button">选择文件</button>
+        </div>
+      </div>
+      <div id="file-drop" class="clip-drop">
+        <p>请把音视频文件拖放到这里！</p>
+      </div>
+      <div id="file-info" class="clip-file-info hidden">
+        <span id="file-name" class="file-name"></span>
+        <span id="preview-tag" class="file-badge badge-video hidden">低画质预览（不影响输出）</span>
+        <span id="file-meta" class="file-status"></span>
+      </div>
+    </section>
+
+    <!-- 播放与截取 -->
+    <section class="panel hidden" id="player-panel">
+      <div class="clip-player" id="player-box">
+        <video id="video" playsinline></video>
+        <div id="player-overlay" class="clip-player-overlay hidden"></div>
+      </div>
+      <div class="clip-controls">
+        <button id="btn-play" class="btn" type="button">播放</button>
+        <span id="time-cur" class="clip-time">0:00:00</span>
+        <input id="seek-bar" class="clip-seek" type="range" min="0" max="0" step="1" value="0" />
+        <span id="time-total" class="clip-time">0:00:00</span>
+        <input id="volume" class="clip-volume" type="range" min="0" max="1" step="0.05" value="1" title="音量" />
+      </div>
+
+      <!-- 起止设定 -->
+      <div class="clip-range-row">
+        <span class="clip-range-item">
+          <label for="input-start">起点</label>
+          <input id="input-start" type="text" value="0:00:00" />
+          <button id="btn-set-start" class="btn" type="button">设为起点</button>
+        </span>
+        <span class="clip-range-item">
+          <label for="input-end">终点</label>
+          <input id="input-end" type="text" value="0:00:00" />
+          <button id="btn-set-end" class="btn" type="button">设为终点</button>
+        </span>
+        <button id="btn-capture" class="btn" type="button">另存为图像</button>
+      </div>
+
+      <!-- 步进寻址 -->
+      <div class="clip-step-row">
+        <span class="clip-step-group">1秒：
+          <button class="btn" type="button" data-step="-1">&lt;</button>
+          <button class="btn" type="button" data-step="1">&gt;</button>
+        </span>
+        <span class="clip-step-group">5秒：
+          <button class="btn" type="button" data-step="-5">&lt;</button>
+          <button class="btn" type="button" data-step="5">&gt;</button>
+        </span>
+        <span class="clip-step-group">30秒：
+          <button class="btn" type="button" data-step="-30">&lt;</button>
+          <button class="btn" type="button" data-step="30">&gt;</button>
+        </span>
+        <span class="clip-step-group">3分钟：
+          <button class="btn" type="button" data-step="-180">&lt;</button>
+          <button class="btn" type="button" data-step="180">&gt;</button>
+        </span>
+      </div>
+
+      <!-- 起止双滑块（同一条轨道，两端留白、选中区间绿色） -->
+      <div class="clip-sliders" id="clip-sliders">
+        <div class="clip-range-track"></div>
+        <input id="slider-start" type="range" min="0" max="0" step="1" value="0" title="起点" />
+        <input id="slider-end" type="range" min="0" max="0" step="1" value="0" title="终点" />
+      </div>
+      <p class="clip-tip">快捷键：空格 播放/暂停，A 设为起点，D 设为终点。无损切（流复制，非常快）从最近关键帧开始切割，起点可能有少许偏差；输出与源文件同目录、同格式。</p>
+    </section>
+
+    <!-- 进度与操作 -->
+    <section class="panel hidden" id="action-panel">
+      <div class="convert-actions">
+        <button id="btn-start" class="btn btn-primary" type="button" disabled>保存此场景</button>
+        <button id="btn-cancel" class="btn btn-danger hidden" type="button">取消</button>
+        <span id="status-text" class="status-text"></span>
+      </div>
+      <div class="progress-track">
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
+      <pre id="log-area" class="log-area hidden"></pre>
+    </section>
+  </main>
+
+  <script src="js/clip.js"></script>
+</body>
+</html>

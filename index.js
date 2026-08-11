@@ -22,6 +22,16 @@ function createWindow() {
   });
 
   win.loadFile(path.join(__dirname, 'html', 'index.html'));
+
+  if (!app.isPackaged) {
+    // 开发模式下打开 DevTools
+    win.webContents.openDevTools();
+  } else {
+    // 打包后禁止打开 DevTools（快捷键 / 菜单触发均拦截）
+    win.webContents.on('devtools-opened', () => {
+      win.webContents.closeDevTools();
+    });
+  }
 }
 
 app.whenReady().then(() => {

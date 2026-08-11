@@ -22,6 +22,10 @@
       window.location.href = 'merge.html';
       return;
     }
+    if (feature === 'clip') {
+      window.location.href = 'clip.html';
+      return;
+    }
     const name = FEATURE_NAMES[feature];
     if (!name) return;
     featureTitle.textContent = name;

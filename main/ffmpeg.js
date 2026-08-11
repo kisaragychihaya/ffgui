@@ -628,6 +628,89 @@ async function runMerge(sender, job) {
   return { total: 1, done: result.ok ? 1 : 0, cancelled };
 }
 
+// ---------- 音视频截取（无损切）/ 预览副本 / 抓帧 ----------
+
+// 无损切：-ss 放 -i 前快速 seek，-c copy 流复制不重编码。
+// 起点落在 <= start 的最近关键帧，可能有少许偏差（界面已提示）。
+function buildClipArgs(job, outPath) {
+  const duration = Math.max(0, job.end - job.start);
+  return ['-hide_banner', '-y',
+    '-ss', String(job.start),
+    '-i', job.input,
+    '-t', String(duration),
+    '-c', 'copy', '-avoid_negative_ts', 'make_zero',
+    '-nostats', '-progress', 'pipe:1', outPath];
+}
+
+async function runClip(sender, job) {
+  cancelled = false;
+  const send = (evt) => {
+    if (!sender.isDestroyed()) sender.send('ffgui:convert-event', evt);
+  };
+  const start = Number(job.start);
+  const end = Number(job.end);
+  if (!job.input || !(start >= 0) || !(end > start)) {
+    send({ type: 'file-error', index: 0, input: '截取任务', error: '起止时间无效（终点必须大于起点）' });
+    return { total: 1, done: 0, cancelled: false };
+  }
+  // 输出与源文件同目录同扩展名；同名时 buildOutputPath 自动加 _ffgui 后缀
+  const ext = path.extname(job.input).slice(1).toLowerCase() || 'mp4';
+  const outPath = buildOutputPath(job.input, job.outputDir, ext);
+  const result = await runFfmpegTask({
+    args: buildClipArgs({ input: job.input, start, end }, outPath),
+    index: 0,
+    label: job.input,
+    output: outPath,
+    getDuration: () => end - start,
+    send,
+    taskName: '截取',
+  });
+  return { total: 1, done: result.ok ? 1 : 0, cancelled };
+}
+
+// 预览副本：浏览器无法解码时兜底（wmv/flv，或封装了非常规编码的 mkv/avi 等；
+// 普通 mkv Chromium 本身支持，不会走到这里），转一份低码率 mp4/m4a
+// 供 <video> 播放定位。副本与原片时间轴 1:1 对齐，截取/截图仍作用于原文件。
+function getPreviewDir() {
+  return path.join(app.getPath('userData'), 'preview-cache');
+}
+
+async function runPreview(sender, job) {
+  cancelled = false;
+  const send = (evt) => {
+    if (!sender.isDestroyed()) sender.send('ffgui:convert-event', evt);
+  };
+  const dir = getPreviewDir();
+  fs.mkdirSync(dir, { recursive: true });
+  // 单槽位：生成前清掉旧副本（旧副本可能正被 <video> 占用，删除失败则忽略）
+  for (const name of fs.readdirSync(dir)) {
+    if (name.startsWith('preview.')) {
+      try { fs.unlinkSync(path.join(dir, name)); } catch { /* 占用中则忽略 */ }
+    }
+  }
+  const outPath = path.join(dir, job.hasVideo ? 'preview.mp4' : 'preview.m4a');
+  const args = ['-hide_banner', '-y', '-i', job.input];
+  if (job.hasVideo) {
+    args.push('-vf', "scale='min(960,iw)':-2", '-c:v', 'libx264',
+      '-preset', 'ultrafast', '-crf', '30');
+    if (job.hasAudio) args.push('-c:a', 'aac', '-b:a', '96k');
+    else args.push('-an');
+  } else {
+    args.push('-vn', '-c:a', 'aac', '-b:a', '128k');
+  }
+  args.push('-nostats', '-progress', 'pipe:1', outPath);
+  const result = await runFfmpegTask({
+    args,
+    index: 0,
+    label: job.input,
+    output: outPath,
+    getDuration: () => Number(job.duration) || 0,
+    send,
+    taskName: '生成预览',
+  });
+  return { ok: result.ok, cancelled, output: result.ok ? outPath : null };
+}
+
 // ---------- IPC ----------
 
 function registerIpc() {
@@ -673,6 +756,29 @@ function registerIpc() {
   ipcMain.handle('ffgui:probeMedia', (_event, files) => Promise.all(files.map(probeFile)));
 
   ipcMain.handle('ffgui:merge', (event, job) => runMerge(event.sender, job));
+
+  // 截取（无损切）与预览副本（进度事件复用 convert-event，取消复用 cancelConvert）
+  ipcMain.handle('ffgui:clip', (event, job) => runClip(event.sender, job));
+  ipcMain.handle('ffgui:makePreview', (event, job) => runPreview(event.sender, job));
+
+  // 抓帧截图：先弹保存对话框，再用 ffmpeg 从原文件按时间点抓一帧 PNG
+  ipcMain.handle('ffgui:captureFrame', async (event, payload) => {
+    const win = require('electron').BrowserWindow.fromWebContents(event.sender);
+    const res = await dialog.showSaveDialog(win, {
+      title: '另存为图像',
+      defaultPath: payload.defaultName || 'frame.png',
+      filters: [{ name: 'PNG 图像', extensions: ['png'] }],
+    });
+    if (res.canceled || !res.filePath) return null;
+    // -ss 放 -i 前快速定位；输出为图像（重新编码单帧），时间点精确
+    await runFfmpeg(['-hide_banner', '-y', '-ss', String(Number(payload.time) || 0),
+      '-i', payload.input, '-frames:v', '1', res.filePath]);
+    if (!fs.existsSync(res.filePath)) {
+      throw new Error('抓帧失败，请检查该时间点是否存在画面');
+    }
+    console.log(`[ffgui] 已保存截图: ${res.filePath}`);
+    return res.filePath;
+  });
 
   ipcMain.handle('ffgui:cancelConvert', () => {
     cancelled = true;

@@ -32,4 +32,18 @@ contextBridge.exposeInMainWorld('ffgui', {
   // 合并任务（探测 + 拼接；进度事件复用 onConvertEvent，取消复用 cancelConvert）
   probeMedia: (files) => ipcRenderer.invoke('ffgui:probeMedia', files),
   merge: (job) => ipcRenderer.invoke('ffgui:merge', job),
+
+  // 截取任务（无损切；进度事件复用 onConvertEvent，取消复用 cancelConvert）
+  clip: (job) => ipcRenderer.invoke('ffgui:clip', job),
+  // 浏览器放不了的格式：转一份低码率临时预览副本供播放定位
+  makePreview: (job) => ipcRenderer.invoke('ffgui:makePreview', job),
+  // 抓帧截图（主进程弹保存对话框，ffmpeg 从原文件抓一帧 PNG）
+  captureFrame: (payload) => ipcRenderer.invoke('ffgui:captureFrame', payload),
+  // 本地路径转 file:// URL（<video> 播放本地文件用）
+  pathToFileUrl: (p) => {
+    // Windows 路径：C:\path\to\file -> file:///C:/path/to/file
+    // macOS/Linux 路径：/path/to/file -> file:///path/to/file
+    const normalized = p.replace(/\\/g, '/');
+    return 'file:///' + normalized;
+  },
 });

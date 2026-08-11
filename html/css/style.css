@@ -387,6 +387,7 @@ body {
   background: linear-gradient(90deg, var(--accent), #6c5ce7);
   border-radius: 4px;
   transition: width 0.2s ease;
+  width: var(--progress-width, 0%);
 }
 
 .log-area {
@@ -614,4 +615,231 @@ body {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ---------- 截取页 ---------- */
+
+.clip-view {
+  max-width: 860px;
+}
+
+.clip-drop {
+  padding: 28px 0;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+
+.clip-file-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.clip-player {
+  position: relative;
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.clip-player video {
+  display: block;
+  width: 100%;
+  max-height: 380px;
+  margin: 0 auto;
+  cursor: pointer;
+}
+
+/* 纯音频文件无画面，隐藏黑色播放区 */
+.clip-player.audio-only {
+  display: none;
+}
+
+.clip-player-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 24px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 14px;
+  text-align: center;
+}
+
+.clip-player-overlay.hidden {
+  display: none;
+}
+
+.clip-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.clip-time {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.clip-seek {
+  flex: 1;
+  min-width: 0;
+}
+
+.clip-volume {
+  width: 80px;
+  flex-shrink: 0;
+}
+
+.clip-controls input[type="range"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.clip-range-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.clip-range-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.clip-range-item input {
+  width: 88px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  text-align: center;
+}
+
+.clip-range-item input:focus {
+  border-color: var(--accent);
+}
+
+.clip-range-item input.invalid {
+  border-color: #e74c3c;
+}
+
+#btn-capture {
+  margin-left: auto;
+}
+
+.clip-step-row {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.clip-step-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.clip-step-group .btn {
+  padding: 5px 12px;
+}
+
+/* 起止双滑块：两个 range 叠在同一条轨道上，两端留白、选中区间绿色。
+   轨道两端的留白与滑块中心对齐（滑块宽 16px，轨道内缩半个滑块宽），
+   绿色区间由 JS 写入的 --range-a / --range-b（0~1 小数）控制 */
+.clip-sliders {
+  position: relative;
+  height: 20px;
+  margin-top: 16px;
+}
+
+.clip-range-track {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  right: 8px;
+  height: 6px;
+  transform: translateY(-50%);
+  border-radius: 3px;
+  background: linear-gradient(90deg,
+    var(--border) calc(var(--range-a, 0) * 100%),
+    #2ecc71 0,
+    #2ecc71 calc(var(--range-b, 1) * 100%),
+    var(--border) 0);
+}
+
+.clip-sliders input[type="range"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  pointer-events: none; /* 轨道区域事件穿透，只有滑块可点 */
+}
+
+/* 两滑块重叠时，起点滑块提到上层（终点滑块默认在上） */
+.clip-sliders.start-on-top #slider-start {
+  z-index: 2;
+}
+
+.clip-sliders input[type="range"]::-webkit-slider-runnable-track {
+  height: 20px;
+  background: transparent;
+}
+
+.clip-sliders input[type="range"]::-moz-range-track {
+  height: 20px;
+  background: transparent;
+}
+
+.clip-sliders input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #2ecc71;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.clip-sliders input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #2ecc71;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.clip-tip {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }

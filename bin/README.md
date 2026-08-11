@@ -18,8 +18,9 @@
 ### macOS
 
 使用自建预编译构建：https://github.com/kisaragychihaya/ffmpeg_build_mac/releases
-下载 `ffmpeg-full-macos-arm64.tar.gz`，解压后把其中的 `bin/` 和 `lib/`
-两个目录原样放入本目录（即 `bin/bin/ffmpeg`、`bin/lib/*.dylib`），
+下载 `ffmpeg-full-macos-arm64-static.tar.gz`（混合静态构建，体积更小，
+能力与 shared 版一致；无 .a 的库仍动态链接），解压后把其中的 `bin/` 和
+`lib/` 两个目录原样放入本目录（即 `bin/bin/ffmpeg`、`bin/lib/*.dylib`），
 并 `chmod +x bin/bin/ffmpeg`。
 
 也可以不放置，直接通过 Homebrew 安装：`brew install ffmpeg`。

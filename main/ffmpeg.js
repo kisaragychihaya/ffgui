@@ -13,8 +13,10 @@ function getFfmpegPath() {
     return path.join(base, 'bin', 'ffmpeg.exe');
   }
   if (process.platform === 'darwin') {
-    // 优先使用内置的预编译 ffmpeg（bin/bin/ffmpeg，动态库在 bin/lib/，
-    // 引用 @executable_path/../lib，相对布局不能变；打包后位于 resources/bin/ 下）
+    // 优先使用内置的预编译 ffmpeg（bin/bin/ffmpeg）。自建 static 构建是
+    // 混合静态链接：大部分库静态编入，无 .a 的库仍动态链接、经 dylibbundler
+    // 收集到 bin/lib/，引用 @executable_path/../lib，相对布局不能变。
+    // 打包后位于 resources/bin/ 下
     const base = app.isPackaged ? process.resourcesPath : app.getAppPath();
     const bundled = path.join(base, 'bin', 'bin', 'ffmpeg');
     if (fs.existsSync(bundled)) return bundled;

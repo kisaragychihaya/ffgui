@@ -59,10 +59,12 @@ html/js/merge.js    合并页全部逻辑
 html/css/style.css  全部页面共用样式
 bin/ffmpeg.exe      内置的 ffmpeg：Windows 为 bin/ffmpeg.exe，macOS 为 bin/bin/ffmpeg
 bin/bin/ bin/lib/   + bin/lib/（自建预编译构建，来自 kisaragychihaya/ffmpeg_build_mac
-                    的 release；tar.gz 解压出的 bin/ 与 lib/ 原样放入项目 bin/ 下。
-                    该构建是动态链接的：dylibbundler 收集依赖到 lib/，二进制引用
-                    @executable_path/../lib，bin/ 与 lib/ 相对布局不能变，只拷
-                    ffmpeg 单文件无法运行）。开发时从项目根 bin/ 加载，打包时经
+                    的 release，使用 static 混合静态构建：大部分库静态编入，
+                    无 .a 静态库的依赖（dav1d/svt-av1/jxl/placebo/rsvg/whisper/
+                    SDL2/glib 等）仍动态链接，经 dylibbundler 收集到 lib/，
+                    二进制引用 @executable_path/../lib，bin/ 与 lib/ 相对布局
+                    不能变，只拷 ffmpeg 单文件无法运行；tar.gz 解压出的 bin/ 与
+                    lib/ 原样放入项目 bin/ 下）。开发时从项目根 bin/ 加载，打包时经
                     extraResource 复制到 resources/bin/（main/ffmpeg.js 的
                     getFfmpegPath 按 app.isPackaged 区分两条路径）；mac 未内置时
                     回退 Homebrew（依次探测 /opt/homebrew/bin/ffmpeg、

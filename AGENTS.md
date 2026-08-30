@@ -52,7 +52,15 @@ main/ffmpeg.js      主进程核心：
                       有无音视频流/分辨率，attached pic 封面不算视频流）；混合队列用
                       concat filter 重编码拼接，纯音频段生成等长黑屏（color 源）、
                       无音轨视频段生成静音（anullsrc）；纯音频队列 concat v=0 只拼音频；
-                      输出文件名为 merged_<时间戳>.<格式>（buildMergeOutputPath）
+                      输出文件名为 merged_<时间戳>.<格式>（buildMergeOutputPath）；
+                      可选字幕（job.subtitle = { path, mode }）：burn 硬字幕在 concat 后
+                      经 subtitles 滤镜烧录（路径转义见 escapeSubtitleFilterPath：
+                      正斜杠 + `\:` + 单引号包裹），embed 软字幕作为额外输入
+                      -map 进容器（MKV -c:s copy、MP4 转 mov_text，lavfi 输入索引
+                      相应后移 lavfiBase）；字幕时长探测 probeSubtitleDuration 直接
+                      解析文本时间戳（ffmpeg -i 对字幕输出 Duration: N/A），支持
+                      srt/vtt/ass/ssa；有字幕时允许只给 1 个音视频文件；纯音频
+                      队列拒绝字幕
                     - 截取任务（runClip）：无损切，-ss 放 -i 前快速 seek + -c copy
                       流复制 + -avoid_negative_ts make_zero，不重编码；起点落在
                       <= 起点的最近关键帧，可能有偏差（截取页已提示）；输出与源文件
@@ -66,20 +74,24 @@ main/ffmpeg.js      主进程核心：
                       ffmpeg -ss <t> -i <原文件> -frames:v 1 输出 PNG（原分辨率）
                     - IPC handler：ffgui:getCapabilities / clearCapsCache /
                       pickMediaFiles / pickDirectory / convert / cancelConvert /
-                      probeMedia / merge / clip / makePreview / captureFrame
+                      probeMedia / merge / pickSubtitle / probeSubtitle /
+                      clip / makePreview / captureFrame
                       （合并、截取、预览的进度与取消均复用 convert 的事件与 IPC）
 preload/preload.js  通过 contextBridge 暴露 window.ffgui（platform、versions、
                     getCapabilities、clearCapsCache、pickMediaFiles、pickDirectory、
                     getPathForFile、convert、cancelConvert、onConvertEvent、
-                    probeMedia、merge、clip、makePreview、captureFrame、pathToFileUrl）
+                    probeMedia、merge、pickSubtitle、probeSubtitle、clip、
+                    makePreview、captureFrame、pathToFileUrl）
 html/index.html     首页（功能导航卡片 + "清除硬件信息缓存"按钮）
 html/convert.html   转码页
-html/merge.html     合并页（队列拖动排序、混合队列黑屏段拼接）
+html/merge.html     合并页（队列拖动排序、混合队列黑屏段拼接、可拖入一个字幕文件）
 html/clip.html      截取页（CSP 额外放行 media-src blob: file: 以播放本地文件）
 html/js/index.js    首页视图切换与清缓存逻辑
 html/js/convert.js  转码页全部逻辑：候选格式/编码器清单是硬编码的，但会按主进程
                     探测到的真实能力过滤后填充下拉框
-html/js/merge.js    合并页全部逻辑
+html/js/merge.js    合并页全部逻辑：字幕单槽位拖放（拖到拼接队列区域的字幕文件会
+                    自动转投字幕槽位），开始前校验字幕时长与合并总时长，
+                    不匹配时弹警告由用户确认
 html/js/clip.js     截取页全部逻辑：原生 <video> 播放（不引第三方播放器库，库不增加
                     解码能力），起止双滑块 + 步进寻址 + 抓帧截图；播放 error 时调
                     makePreview 生成预览副本兜底，失败则判定无法预览、禁止截取

@@ -29,6 +29,31 @@
       <p class="merge-tip">提示：队列为纯音频时只输出音频；队列中含视频时，音频文件会以黑屏画面合并进视频。</p>
     </section>
 
+    <!-- 字幕（可选）：作用于合并后的整段视频 -->
+    <section class="panel" id="subtitle-panel">
+      <div class="panel-header">
+        <h3>字幕（可选）</h3>
+        <div class="panel-actions">
+          <button id="btn-pick-subtitle" class="btn" type="button">选择字幕</button>
+          <button id="btn-clear-subtitle" class="btn btn-plain hidden" type="button">移除</button>
+        </div>
+      </div>
+      <div id="subtitle-drop" class="subtitle-drop">
+        <span id="subtitle-empty">尚未添加字幕，将 .srt / .ass / .ssa / .vtt 文件拖拽到此处</span>
+        <span id="subtitle-info" class="subtitle-info hidden"></span>
+      </div>
+      <div class="form-grid hidden" id="subtitle-options">
+        <label class="form-item">
+          <span class="form-label">字幕方式</span>
+          <select id="sel-submode">
+            <option value="burn">烧录进画面（硬字幕）</option>
+            <option value="embed">内嵌字幕轨（软字幕，可开关）</option>
+          </select>
+        </label>
+      </div>
+      <p class="merge-tip">提示：字幕时间轴需与合并后的整段视频一致，时长不匹配时会在开始前弹出警告；只拖入 1 个视频加 1 个字幕也可以开始。</p>
+    </section>
+
     <!-- 输出设置 -->
     <section class="panel">
       <div class="panel-header"><h3>输出设置</h3></div>

@@ -17,6 +17,8 @@
   // 与主进程文件选择对话框保持一致的媒体扩展名
   const MEDIA_EXTS = new Set(['mp4', 'mkv', 'avi', 'mov', 'flv', 'wmv', 'webm', 'ts', 'm4v',
     'mp3', 'aac', 'flac', 'wav', 'ogg', 'm4a', 'wma']);
+  // 支持的字幕扩展名（拖入拼接队列区域的字幕会自动转投字幕槽位）
+  const SUBTITLE_EXTS = new Set(['srt', 'ass', 'ssa', 'vtt']);
 
   // ---------- DOM ----------
   const $ = (id) => document.getElementById(id);
@@ -26,6 +28,14 @@
     addFiles: $('btn-add-files'),
     clearFiles: $('btn-clear-files'),
     fileList: $('file-list'),
+    subtitlePanel: $('subtitle-panel'),
+    subtitleDrop: $('subtitle-drop'),
+    subtitleEmpty: $('subtitle-empty'),
+    subtitleInfo: $('subtitle-info'),
+    pickSubtitle: $('btn-pick-subtitle'),
+    clearSubtitle: $('btn-clear-subtitle'),
+    subOptions: $('subtitle-options'),
+    submode: $('sel-submode'),
     format: $('sel-format'),
     outdir: $('input-outdir'),
     pickDir: $('btn-pick-dir'),
@@ -38,6 +48,7 @@
 
   const state = {
     files: [],        // { path, duration, hasVideo, hasAudio, width, height }
+    subtitle: null,   // { path, duration }，null 表示未添加
     outputDir: null,
     running: false,
     dragIndex: -1,    // 正在拖动排序的项
@@ -151,7 +162,34 @@
       });
     }
     updateFormatOptions();
-    els.start.disabled = state.running || state.files.length < 2;
+    // 有字幕时 1 个音视频文件即可开始（相当于给单文件加字幕）
+    const minFiles = state.subtitle ? 1 : 2;
+    els.start.disabled = state.running || state.files.length < minFiles;
+  }
+
+  // ---------- 字幕（单槽位，作用于合并后的整段视频） ----------
+  function renderSubtitle() {
+    const sub = state.subtitle;
+    els.subtitleEmpty.classList.toggle('hidden', !!sub);
+    els.subtitleInfo.classList.toggle('hidden', !sub);
+    els.subOptions.classList.toggle('hidden', !sub);
+    els.clearSubtitle.classList.toggle('hidden', !sub);
+    if (sub) {
+      els.subtitleInfo.textContent = `${baseName(sub.path)}（${formatSeconds(sub.duration)}）`;
+      els.subtitleInfo.title = sub.path;
+    }
+  }
+
+  async function setSubtitle(p) {
+    if (!p || state.running) return;
+    const duration = await window.ffgui.probeSubtitle(p);
+    if (!duration) {
+      log(`无法从字幕文件中读取时间轴：${baseName(p)}`);
+      return;
+    }
+    state.subtitle = { path: p, duration };
+    renderSubtitle();
+    renderFileList();
   }
 
   // 根据队列内容切换输出格式候选
@@ -193,15 +231,35 @@
     els.cancel.classList.toggle('hidden', !running);
     els.addFiles.disabled = running;
     els.clearFiles.disabled = running;
+    els.pickSubtitle.disabled = running;
+    els.clearSubtitle.disabled = running;
     renderFileList();
   }
 
   async function startMerge() {
-    if (state.files.length < 2) return;
+    const minFiles = state.subtitle ? 1 : 2;
+    if (state.files.length < minFiles) return;
+    if (state.subtitle && !anyVideo()) {
+      log('纯音频队列不支持添加字幕，请先移除字幕文件');
+      return;
+    }
+    // 字幕时长需与合并后的整段视频一致，不匹配时弹警告由用户确认
+    if (state.subtitle) {
+      const total = state.files.reduce((sum, f) => sum + f.duration, 0);
+      const diff = Math.abs(state.subtitle.duration - total);
+      // 容差 ±10 秒：字幕与整段视频时长差在 10 秒内视为匹配
+      if (diff > 10) {
+        const ok = window.confirm(
+          `警告：字幕时长（${formatSeconds(state.subtitle.duration)}）与合并后视频时长`
+          + `（${formatSeconds(total)}）不一致，合并后字幕可能与画面不同步。\n\n仍要继续吗？`);
+        if (!ok) return;
+      }
+    }
     const job = {
       inputs: state.files.map((f) => f.path),
       outputDir: state.outputDir,
       format: els.format.value,
+      subtitle: state.subtitle ? { path: state.subtitle.path, mode: els.submode.value } : null,
     };
 
     setRunning(true);
@@ -259,6 +317,15 @@
     window.ffgui.cancelConvert();
     els.status.textContent = '正在取消…';
   });
+  els.pickSubtitle.addEventListener('click', async () => {
+    await setSubtitle(await window.ffgui.pickSubtitle());
+  });
+  els.clearSubtitle.addEventListener('click', () => {
+    if (state.running) return;
+    state.subtitle = null;
+    renderSubtitle();
+    renderFileList();
+  });
 
   // ---------- 拖拽添加文件 ----------
   window.addEventListener('dragover', (e) => e.preventDefault());
@@ -283,6 +350,12 @@
     let skipped = 0;
     for (const file of e.dataTransfer.files) {
       const ext = (file.name.split('.').pop() || '').toLowerCase();
+      // 字幕文件自动转投字幕槽位，不必精确拖到字幕区域
+      if (SUBTITLE_EXTS.has(ext)) {
+        const p = window.ffgui.getPathForFile(file);
+        if (p) await setSubtitle(p);
+        continue;
+      }
       if (!MEDIA_EXTS.has(ext)) {
         skipped++;
         continue;
@@ -294,5 +367,34 @@
     await addFiles(paths);
   });
 
+  // ---------- 字幕拖放区 ----------
+  els.subtitlePanel.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (state.dragIndex >= 0) return;
+    if (!state.running) els.subtitlePanel.classList.add('drag-over');
+  });
+  els.subtitlePanel.addEventListener('dragleave', (e) => {
+    if (!els.subtitlePanel.contains(e.relatedTarget)) {
+      els.subtitlePanel.classList.remove('drag-over');
+    }
+  });
+  els.subtitlePanel.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    els.subtitlePanel.classList.remove('drag-over');
+    if (state.running || state.dragIndex >= 0) return;
+
+    for (const file of e.dataTransfer.files) {
+      const ext = (file.name.split('.').pop() || '').toLowerCase();
+      if (!SUBTITLE_EXTS.has(ext)) continue;
+      const p = window.ffgui.getPathForFile(file);
+      if (p) {
+        await setSubtitle(p);
+        return;
+      }
+    }
+    log('请将 .srt / .ass / .ssa / .vtt 字幕文件拖到此处');
+  });
+
   renderFileList();
+  renderSubtitle();
 })();

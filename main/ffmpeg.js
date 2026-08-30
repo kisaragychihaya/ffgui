@@ -510,9 +510,47 @@ function buildMergeOutputPath(job) {
   return path.join(dir, `merged_${ts}.${job.format}`);
 }
 
+// 字幕时长探测：ffmpeg -i 对字幕文件输出 Duration: N/A，
+// 改为直接读取文本，取最后一个时间戳作为时长
+function probeSubtitleDuration(file) {
+  try {
+    const text = fs.readFileSync(file, 'utf8');
+    let max = 0;
+    // srt / vtt：00:01:23,456 或 00:01:23.456
+    for (const m of text.matchAll(/(\d{1,2}):(\d{2}):(\d{2})[.,](\d{1,3})/g)) {
+      const t = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
+        + Number(m[4].padEnd(3, '0')) / 1000;
+      if (t > max) max = t;
+    }
+    // vtt 简写：01:23.456（无小时位）
+    for (const m of text.matchAll(/(?<![:\d])(\d{2}):(\d{2})[.,](\d{1,3})/g)) {
+      const t = Number(m[1]) * 60 + Number(m[2]) + Number(m[3].padEnd(3, '0')) / 1000;
+      if (t > max) max = t;
+    }
+    // ass / ssa：Dialogue: 0,0:01:23.45,...
+    for (const m of text.matchAll(/(\d{1,2}):(\d{2}):(\d{2})\.(\d{1,2})/g)) {
+      const t = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
+        + Number(m[4].padEnd(2, '0')) / 100;
+      if (t > max) max = t;
+    }
+    return max;
+  } catch {
+    return 0;
+  }
+}
+
+// subtitles 滤镜的路径转义：统一为正斜杠，: 转义为 \:（滤镜参数分隔符），
+// 整体加单引号保护空格等字符；单引号本身转义为 \'
+function escapeSubtitleFilterPath(p) {
+  return p.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
+}
+
 // 构造合并命令：混合队列用 concat filter 重编码拼接；
-// 纯音频段生成等长黑屏视频（color 源），无音频的视频段生成静音（anullsrc）
+// 纯音频段生成等长黑屏视频（color 源），无音频的视频段生成静音（anullsrc）；
+// 可选字幕：burn 烧录进画面（subtitles 滤镜），embed 内嵌为字幕轨（-c:s copy/mov_text）
 function buildMergeArgs(job, probes, useX264) {
+  const sub = job.subtitle && job.subtitle.path ? job.subtitle : null;
+  const burn = sub && sub.mode === 'burn';
   const anyVideo = probes.some((p) => p.hasVideo);
   const ref = probes.find((p) => p.hasVideo && p.width > 0);
   // 目标分辨率取第一个视频段的宽高（取偶，兼容 yuv420p）
@@ -521,6 +559,10 @@ function buildMergeArgs(job, probes, useX264) {
 
   const args = ['-hide_banner', '-y'];
   for (const f of job.inputs) args.push('-i', f);
+  // 内嵌字幕轨时字幕作为普通输入，紧跟媒体输入之后（lavfi 输入索引相应后移）
+  const subInputIdx = sub && !burn ? job.inputs.length : -1;
+  if (subInputIdx >= 0) args.push('-i', sub.path);
+  const lavfiBase = job.inputs.length + (subInputIdx >= 0 ? 1 : 0);
 
   const filters = [];
   const lavfi = []; // { kind: 'black'|'silence', duration }
@@ -534,14 +576,14 @@ function buildMergeArgs(job, probes, useX264) {
       } else {
         // 纯音频段：黑屏视频
         lavfi.push({ kind: 'black', duration: p.duration });
-        filters.push(`[${job.inputs.length + lavfi.length - 1}:v]format=yuv420p,setsar=1[v${i}]`);
+        filters.push(`[${lavfiBase + lavfi.length - 1}:v]format=yuv420p,setsar=1[v${i}]`);
       }
       if (p.hasAudio) {
         filters.push(`[${i}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`);
       } else {
         // 无音频轨的视频段：静音
         lavfi.push({ kind: 'silence', duration: p.duration });
-        filters.push(`[${job.inputs.length + lavfi.length - 1}:a]`
+        filters.push(`[${lavfiBase + lavfi.length - 1}:a]`
           + 'aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo'
           + `[a${i}]`);
       }
@@ -553,7 +595,7 @@ function buildMergeArgs(job, probes, useX264) {
     }
   });
 
-  // lavfi 输入按索引顺序追加在媒体输入之后
+  // lavfi 输入按索引顺序追加在媒体（与字幕）输入之后
   for (const l of lavfi) {
     const t = Math.max(0.1, l.duration || 1).toFixed(2);
     if (l.kind === 'black') {
@@ -563,16 +605,24 @@ function buildMergeArgs(job, probes, useX264) {
     }
   }
 
+  // 硬字幕：拼接完成后再经 subtitles 滤镜烧录进画面
+  const catVideo = burn ? 'vcat' : 'vout';
   filters.push(`${segs.join('')}concat=n=${probes.length}:v=${anyVideo ? 1 : 0}:a=1`
-    + (anyVideo ? '[vout][aout]' : '[aout]'));
+    + (anyVideo ? `[${catVideo}][aout]` : '[aout]'));
+  if (burn) {
+    filters.push(`[vcat]subtitles='${escapeSubtitleFilterPath(sub.path)}'[vout]`);
+  }
   args.push('-filter_complex', filters.join(';'));
 
   if (anyVideo) {
     args.push('-map', '[vout]', '-map', '[aout]');
+    // 软字幕：字幕轨直接映射进容器，MKV 保留原编码，MP4 统一转 mov_text
+    if (subInputIdx >= 0) args.push('-map', `${subInputIdx}:s`);
     if (useX264) {
       args.push('-c:v', 'libx264', '-crf', '20');
     }
     args.push('-c:a', 'aac');
+    if (subInputIdx >= 0) args.push('-c:s', job.format === 'mkv' ? 'copy' : 'mov_text');
   } else {
     args.push('-map', '[aout]');
   }
@@ -591,8 +641,9 @@ async function runMerge(sender, job) {
     return { total: 1, done: 0, cancelled: false };
   };
 
-  if (!job.inputs || job.inputs.length < 2) {
-    return fail('合并至少需要 2 个文件');
+  const hasSubtitle = !!(job.subtitle && job.subtitle.path);
+  if (!job.inputs || job.inputs.length < (hasSubtitle ? 1 : 2)) {
+    return fail(hasSubtitle ? '合并至少需要 1 个音视频文件' : '合并至少需要 2 个文件');
   }
 
   const probes = await Promise.all(job.inputs.map(probeFile));
@@ -601,6 +652,9 @@ async function runMerge(sender, job) {
   }
 
   const anyVideo = probes.some((p) => p.hasVideo);
+  if (hasSubtitle && !anyVideo) {
+    return fail('纯音频合并不支持添加字幕，请先移除字幕文件');
+  }
   if (anyVideo && AUDIO_ONLY_FORMATS.has(job.format)) {
     return fail('队列中包含视频文件，请选择视频输出格式（如 MP4/MKV）');
   }
@@ -754,6 +808,21 @@ function registerIpc() {
 
   // 媒体探测（合并页用于判断音/视频、时长、分辨率）
   ipcMain.handle('ffgui:probeMedia', (_event, files) => Promise.all(files.map(probeFile)));
+
+  // 字幕文件选择与时长探测（ffmpeg -i 读不到字幕时长，直接解析文本时间戳）
+  ipcMain.handle('ffgui:pickSubtitle', async (event) => {
+    const win = require('electron').BrowserWindow.fromWebContents(event.sender);
+    const res = await dialog.showOpenDialog(win, {
+      title: '选择字幕文件',
+      properties: ['openFile'],
+      filters: [
+        { name: '字幕文件', extensions: ['srt', 'ass', 'ssa', 'vtt'] },
+        { name: '所有文件', extensions: ['*'] },
+      ],
+    });
+    return res.canceled ? null : res.filePaths[0];
+  });
+  ipcMain.handle('ffgui:probeSubtitle', (_event, file) => probeSubtitleDuration(file));
 
   ipcMain.handle('ffgui:merge', (event, job) => runMerge(event.sender, job));
 

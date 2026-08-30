@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld('ffgui', {
   // 合并任务（探测 + 拼接；进度事件复用 onConvertEvent，取消复用 cancelConvert）
   probeMedia: (files) => ipcRenderer.invoke('ffgui:probeMedia', files),
   merge: (job) => ipcRenderer.invoke('ffgui:merge', job),
+  // 字幕文件选择与时长探测（合并页可选字幕）
+  pickSubtitle: () => ipcRenderer.invoke('ffgui:pickSubtitle'),
+  probeSubtitle: (file) => ipcRenderer.invoke('ffgui:probeSubtitle', file),
 
   // 截取任务（无损切；进度事件复用 onConvertEvent，取消复用 cancelConvert）
   clip: (job) => ipcRenderer.invoke('ffgui:clip', job),

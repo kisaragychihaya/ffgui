@@ -14,6 +14,11 @@ function createWindow() {
     minHeight: 600,
     autoHideMenuBar: true,
     backgroundColor: '#f5f6fa',
+    // Windows 任务栏/标题栏图标用 ICO 更可靠；其他平台用 PNG
+    icon: path.join(
+      __dirname, 'assets', 'imgs',
+      process.platform === 'win32' ? 'icon.ico' : 'icon.png'
+    ),
     webPreferences: {
       preload: path.join(__dirname, 'preload', 'preload.js'),
       contextIsolation: true,

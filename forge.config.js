@@ -59,6 +59,8 @@ module.exports = {
 
   packagerConfig: {
     asar: true,
+    // 应用图标：electron-packager 会根据平台自动追加 .ico / .icns / .png
+    icon: path.join(__dirname, 'assets', 'imgs', 'icon'),
     // 不配置 osxSign：electron-packager 默认不签名（CI 无 Apple 证书也可正常打包）。
     // 注意 Forge 配置中不能出现 null 值（proxify 会崩溃），osxSign: { identity: null } 不可用。
     // 内置 bin/ffmpeg.exe（Windows）/ bin/ffmpeg（macOS）是独立可执行文件，
@@ -87,7 +89,10 @@ module.exports = {
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
-      config: {},
+      config: {
+        // 安装器图标（exe 本体图标由 packagerConfig.icon 提供）
+        setupIcon: path.join(__dirname, 'assets', 'imgs', 'icon.ico'),
+      },
     },
     {
       name: '@electron-forge/maker-zip',

@@ -125,9 +125,13 @@ forge.config.js     Electron Forge 配置（含压缩钩子与 Fuses）
 
 `.github/workflows/build.yml`（workflow_dispatch 手动触发或发布 Release 时触发）：
 
-- Windows 任务：从 GyanD/codexffmpeg 的 GitHub 最新 release 下载 full_build.7z（gyan.dev
+- Windows x64 任务：从 GyanD/codexffmpeg 的 GitHub 最新 release 下载 full_build.7z（gyan.dev
   直链在 CI 上会被反爬拦截），取 `ffmpeg.exe` 放入 `bin/`，`npm ci` + `npm run package`，
   产物压缩为 `FFGui-windows-x64.7z` 上传 artifact；Release 触发时同时上传到 Release Assets
+- Windows arm64 任务：从 tordona/ffmpeg-win-arm64 最新 release 下载 full-static-win-arm64.7z，
+  同样取 `ffmpeg.exe` 放入 `bin/`；x64 runner 无法执行 arm64 二进制，改为校验 PE 头机器类型
+  （0xAA64）；`npm run package -- --arch=arm64` 交叉打包（无原生依赖，可直接交叉），
+  产物为 `FFGui-windows-arm64.7z`
 - macOS 任务：下载 kisaragychihaya/ffmpeg_build_mac 最新 release 的 macos-arm64-static
   tar.gz，`bin/` 与 `lib/` 原样放入项目 `bin/` 并 `chmod +x`，打包后用 ditto 压缩为
   `FFGui-macos-arm64.zip`；Release 触发时同样上传
@@ -155,8 +159,9 @@ forge.config.js     Electron Forge 配置（含压缩钩子与 Fuses）
 
 ## 已知问题
 
-- 未配置应用图标（`packagerConfig.icon`），打包产物使用 Electron 默认图标；如需自定义，
-  准备 `assets/imgs/favicon.ico`（或 .png/.icns）后在 `forge.config.js` 中配置
+- 应用图标已配置为 `assets/imgs/` 下的像素风胡萝卜（icon.png / icon.ico / icon.icns，
+  命名必须与 `packagerConfig.icon` 一致，electron-packager 才能按平台自动选扩展名），
+  由 `forge.config.js` 的 `packagerConfig.icon`、`index.js` 的窗口图标与各 HTML 的 favicon 引用
 - 打包体积较大：`bin/ffmpeg.exe` 约 110MB，经 `extraResource` 原样分发且不进 asar，
   `packagerConfig.ignore` 中的 `/^\/bin($|\/)/` 规则不要删除，否则 asar 里会再塞一份；
   `extraResource` 按构建平台条件配置，Windows / macOS 携带 `bin/`，Linux 不携带

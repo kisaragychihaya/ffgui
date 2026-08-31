@@ -64,6 +64,62 @@ jobs:
         with:
           files: FFGui-windows-x64.7z
 
+  windows-arm64:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 下载 ARM64 版 ffmpeg 并放入 bin/
+        shell: pwsh
+        run: |
+          # Windows ARM64 构建来自 tordona/ffmpeg-win-arm64（gyan.dev 无 arm64 构建），
+          # 取最新 release 的 full static 包（与 x64 的 full_build 能力对齐）
+          $rel = Invoke-RestMethod 'https://api.github.com/repos/tordona/ffmpeg-win-arm64/releases/latest'
+          $asset = $rel.assets | Where-Object { $_.name -match 'full-static-win-arm64\.7z$' } | Select-Object -First 1
+          if (-not $asset) { throw 'ffmpeg-win-arm64 最新 release 中未找到 full-static-win-arm64.7z' }
+          Write-Host "下载 $($asset.name)"
+          curl.exe -L -o ffmpeg.7z $asset.browser_download_url
+          7z x ffmpeg.7z | Out-Null
+          $exe = Get-ChildItem -Recurse -Filter ffmpeg.exe |
+            Where-Object { $_.FullName -like '*bin*' } | Select-Object -First 1
+          if (-not $exe) { throw '压缩包中未找到 ffmpeg.exe' }
+          New-Item -ItemType Directory -Force bin | Out-Null
+          Copy-Item $exe.FullName bin/ffmpeg.exe
+          # runner 是 x64，无法执行 arm64 二进制，改为校验 PE 头机器类型（0xAA64 = ARM64）
+          $bytes = [System.IO.File]::ReadAllBytes("$PWD\bin\ffmpeg.exe")
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0xAA64) { throw ('bin/ffmpeg.exe 不是 ARM64 二进制 (machine=0x{0:X4})' -f $machine) }
+          Write-Host 'ffmpeg.exe 机器类型校验通过：ARM64'
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 打包（arm64）
+        run: npm run package -- --arch=arm64
+
+      - name: 压缩产物
+        shell: pwsh
+        run: 7z a FFGui-windows-arm64.7z ./out/FFGui-win32-arm64 | Out-Null
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFGui-windows-arm64
+          path: FFGui-windows-arm64.7z
+
+      - name: 上传到 Release（仅 Release 触发时）
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: FFGui-windows-arm64.7z
+
   macos:
     runs-on: macos-latest
     steps:

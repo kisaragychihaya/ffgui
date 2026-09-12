@@ -64,6 +64,10 @@
           <select id="sel-format"></select>
         </label>
         <label class="form-item">
+          <span class="form-label">音轨序号（留空保留全部）</span>
+          <input id="input-audio-track" type="number" min="1" step="1" placeholder="如 2：只拼接第 2 条音轨" />
+        </label>
+        <label class="form-item">
           <span class="form-label">输出目录</span>
           <span class="dir-picker">
             <input id="input-outdir" type="text" readonly placeholder="与第一个文件相同" />
@@ -72,6 +76,7 @@
         </label>
       </div>
       <p class="caps-info">合并采用重编码方式拼接，不同格式/分辨率的文件可直接混合；视频段会统一缩放到第一个视频的分辨率。</p>
+      <p class="caps-info">音轨按序号对应拼接，缺少的轨道补静音；请先确认各文件的语言轨顺序一致。每条音轨统一为 44.1 kHz 双声道。MP3、FLAC、WAV 的多音轨输入需明确选轨。</p>
     </section>
 
     <!-- 进度与操作 -->

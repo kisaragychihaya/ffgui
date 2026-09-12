@@ -88,6 +88,8 @@
     format: $('sel-format'),
     vcodec: $('sel-vcodec'),
     acodec: $('sel-acodec'),
+    audioTrack: $('input-audio-track'),
+    itemAudioTrack: $('item-audio-track'),
     itemAcodec: $('item-acodec'),
     hwaccel: $('sel-hwaccel'),
     quality: $('sel-quality'),
@@ -159,7 +161,7 @@
   }
 
   function baseName(p) {
-    return p.split(/[\\/]/).pop();
+    return (p || '').split(/[\\/]/).pop();
   }
 
   function renderFileList() {
@@ -264,6 +266,7 @@
     els.itemQuality.classList.toggle('hidden', audioOnly);
     els.itemHdr2sdr.classList.toggle('hidden', audioOnly);
     els.itemAcodec.classList.toggle('hidden', videoOnly);
+    els.itemAudioTrack.classList.toggle('hidden', videoOnly);
     onVcodecChange();
   }
 
@@ -293,7 +296,11 @@
   }
 
   async function startConvert() {
-    if (state.files.length === 0) return;
+    if (state.running || state.files.length === 0) return;
+    if (!els.audioTrack.checkValidity()) {
+      els.audioTrack.reportValidity();
+      return;
+    }
     const scaleVal = parseScale(els.scale.value);
     const job = {
       inputs: state.files.slice(),
@@ -301,6 +308,7 @@
       format: els.format.value,
       vcodec: AUDIO_ONLY.has(els.format.value) ? 'none' : els.vcodec.value,
       acodec: VIDEO_ONLY.has(els.format.value) ? 'none' : els.acodec.value,
+      audioTrack: els.audioTrack.value,
       hwaccel: els.hwaccel.value,
       quality: els.quality.value,
       hdr2sdr: els.hdr2sdr.checked,
@@ -325,7 +333,7 @@
         els.progressBar.style.width = `${evt.percent}%`;
         // 队列中每个文件显示自己的实时百分比
         setFileStatus(evt.index, `${evt.percent}%`, 'running');
-        els.status.textContent = `(${evt.index + 1}/${state.files.length}) ${baseName(evt.input)}`
+        els.status.textContent = `(${evt.index + 1}/${state.files.length}) ${baseName(evt.input || job.inputs[evt.index])}`
           + ` — ${evt.percent}%  ${formatSeconds(evt.time)}/${formatSeconds(evt.duration)}`
           + (evt.speed ? `  ${evt.speed}` : '');
       } else if (evt.type === 'file-done') {

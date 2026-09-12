@@ -203,6 +203,8 @@ async function getCapabilities() {
 const AUDIO_ONLY_FORMATS = new Set(['mp3', 'm4a', 'flac', 'wav', 'ogg', 'opus']);
 // 无音频轨的封装格式
 const VIDEO_ONLY_FORMATS = new Set(['gif']);
+// 这些输出格式采用单音轨模式；多音轨输入必须由用户明确选轨。
+const SINGLE_AUDIO_FORMATS = new Set(['mp3', 'flac', 'wav', 'flv']);
 // 支持 -crf 质量参数的编码器
 const CRF_ENCODERS = new Set(['libx264', 'libx265', 'libvpx-vp9', 'libaom-av1', 'libsvtav1']);
 const CRF_MAP = { high: 18, medium: 23, low: 28 };
@@ -225,24 +227,73 @@ const HW_QUALITY_PATTERN = /_(nvenc|qsv|amf)$/;
 let currentChild = null;
 let cancelled = false;
 
-function buildOutputPath(input, outputDir, format) {
-  const dir = outputDir || path.dirname(input);
-  const base = path.basename(input, path.extname(input));
-  let out = path.join(dir, `${base}.${format}`);
-  if (path.resolve(out) === path.resolve(input)) {
-    out = path.join(dir, `${base}_ffgui.${format}`);
+function pathKey(file) {
+  const resolved = path.resolve(file);
+  return process.platform === 'linux' ? resolved : resolved.toLowerCase();
+}
+
+// 同时避开现有文件、全部源文件和本批已分配的输出；执行时再用 -n 防止覆盖。
+function uniqueOutputPath(candidate, reserved = new Set()) {
+  const ext = path.extname(candidate);
+  const stem = candidate.slice(0, candidate.length - ext.length);
+  let out = candidate;
+  let suffix = 2;
+  while (fs.existsSync(out) || reserved.has(pathKey(out))) {
+    out = `${stem}_${suffix++}${ext}`;
   }
+  reserved.add(pathKey(out));
   return out;
 }
 
+function buildOutputPath(input, outputDir, format, reserved = new Set()) {
+  const dir = outputDir || path.dirname(input);
+  const base = path.basename(input, path.extname(input));
+  let out = path.join(dir, `${base}.${format}`);
+  if (pathKey(out) === pathKey(input)) {
+    out = path.join(dir, `${base}_ffgui.${format}`);
+  }
+  reserved.add(pathKey(input));
+  return uniqueOutputPath(out, reserved);
+}
+
+function selectedAudioTrack(job) {
+  if (job.audioTrack == null || job.audioTrack === '') return null;
+  const track = Number(job.audioTrack);
+  if (!Number.isSafeInteger(track) || track < 1) throw new Error('音轨序号必须是从 1 开始的整数');
+  return track - 1;
+}
+
+function validateAudioSelection(job, probes, merging = false) {
+  if (VIDEO_ONLY_FORMATS.has(job.format) || job.acodec === 'none') return;
+  const track = selectedAudioTrack(job);
+  const count = (p) => p.audioTracks.length;
+  if (track === null && SINGLE_AUDIO_FORMATS.has(job.format) && probes.some((p) => count(p) > 1)) {
+    throw new Error(`${job.format.toUpperCase()} 使用单音轨输出，请填写要保留的音轨序号，或改用 MKV/M4A 等多音轨格式`);
+  }
+  if (track !== null && (merging ? !probes.some((p) => count(p) > track) : probes.some((p) => count(p) <= track))) {
+    throw new Error(`输入文件没有第 ${track + 1} 条音轨`);
+  }
+}
+
 function buildArgs(job, input, outPath) {
-  const args = ['-hide_banner', '-y'];
+  const args = ['-hide_banner', '-n'];
   if (job.hwaccel) {
     args.push('-hwaccel', job.hwaccel);
   }
   args.push('-i', input);
 
   const audioOnly = AUDIO_ONLY_FORMATS.has(job.format);
+  const videoOnly = VIDEO_ONLY_FORMATS.has(job.format);
+  // 显式映射：默认保留全部音轨；序号按每个输入文件的音轨顺序从 1 开始。
+  if (!audioOnly && job.vcodec !== 'none') args.push('-map', '0:V:0?');
+  if (!videoOnly && job.acodec !== 'none') {
+    const track = selectedAudioTrack(job);
+    args.push('-map', track === null ? '0:a?' : `0:a:${track}`);
+  }
+  // MKV 同时保留字幕及字体附件；其他容器不盲目复制可能不兼容的附加流。
+  if (!audioOnly && !videoOnly && job.vcodec !== 'none') {
+    if (job.format === 'mkv') args.push('-map', '0:s?', '-map', '0:t?', '-c:s', 'copy', '-c:t', 'copy');
+  }
   // 高级参数：码率（kbps），0/缺省表示不传入，由 ffmpeg 用默认值
   const vbitrate = Math.floor(Number(job.vbitrate)) || 0;
   const abitrate = Math.floor(Number(job.abitrate)) || 0;
@@ -357,6 +408,8 @@ function runFfmpegTask({ args, index, label, output, getDuration, onStderrText, 
     let stderrTail = '';
     let errLineBuf = '';
     let outBuffer = '';
+    let kv = {};
+    let progressEnded = false;
 
     send({ type: 'file-start', index, input: label, output });
     console.log(`[ffgui] 开始${taskName} (${index + 1}): ${label}`);
@@ -379,7 +432,6 @@ function runFfmpegTask({ args, index, label, output, getDuration, onStderrText, 
     // -progress 输出为连续的 key=value 行，每个统计块以 "progress=continue|end" 行结尾
     child.stdout.on('data', (chunk) => {
       outBuffer += chunk.toString();
-      let kv = {};
       let nl;
       while ((nl = outBuffer.indexOf('\n')) >= 0) {
         const line = outBuffer.slice(0, nl).trim();
@@ -394,12 +446,14 @@ function runFfmpegTask({ args, index, label, output, getDuration, onStderrText, 
           continue;
         }
         // 一个统计块结束
+        if (val === 'end') progressEnded = true;
         const duration = getDuration();
         const timeSec = kv.out_time ? parseTimeToSeconds(kv.out_time) : 0;
         const percent = duration > 0 ? Math.min(99, Math.round((timeSec / duration) * 100)) : 0;
         send({
           type: 'progress',
           index,
+          input: label,
           percent,
           time: timeSec,
           duration,
@@ -425,22 +479,31 @@ function runFfmpegTask({ args, index, label, output, getDuration, onStderrText, 
         send({ type: 'file-error', index, input: label, error: '已取消' });
         return resolve({ ok: false, cancelled: true });
       }
-      if (code === 0) {
+      // 部分 FFmpeg 构建在 -n 拒绝覆盖时仍返回 0，必须同时收到完成统计块。
+      if (code === 0 && progressEnded) {
         console.log(`[ffgui] ${taskName}完成 (${index + 1}): ${output}`);
         send({ type: 'file-done', index, input: label, output });
         resolve({ ok: true });
       } else {
         console.log(`[ffgui] ${taskName}失败 (${index + 1})，退出码 ${code}: ${label}`);
         const tail = stderrTail.split(/\r?\n/).filter(Boolean).slice(-5).join('\n');
-        send({ type: 'file-error', index, input: label, error: `ffmpeg 退出码 ${code}\n${tail}` });
+        const reason = code === 0 ? 'ffmpeg 未完成输出' : `ffmpeg 退出码 ${code}`;
+        send({ type: 'file-error', index, input: label, error: `${reason}\n${tail}` });
         resolve({ ok: false });
       }
     });
   });
 }
 
-function convertOne(job, input, index, send) {
-  const outPath = buildOutputPath(input, job.outputDir, job.format);
+async function convertOne(job, input, index, send, outPath) {
+  try {
+    const probe = await probeFile(input);
+    validateAudioSelection(job, [probe]);
+    if (cancelled) return { ok: false, cancelled: true };
+  } catch (err) {
+    send({ type: 'file-error', index, input, error: err.message });
+    return { ok: false };
+  }
   const args = buildArgs(job, input, outPath);
   // 时长从 stderr 的 Duration 行惰性解析
   let duration = 0;
@@ -458,12 +521,14 @@ function convertOne(job, input, index, send) {
 
 async function runJob(sender, job) {
   cancelled = false;
+  const reserved = new Set(job.inputs.map(pathKey));
+  const outputs = job.inputs.map((input) => buildOutputPath(input, job.outputDir, job.format, reserved));
   const results = [];
   for (let i = 0; i < job.inputs.length; i++) {
     if (cancelled) break;
     results.push(await convertOne(job, job.inputs[i], i, (evt) => {
       if (!sender.isDestroyed()) sender.send('ffgui:convert-event', evt);
-    }));
+    }, outputs[i]));
   }
   const done = results.filter((r) => r && r.ok).length;
   return { total: job.inputs.length, done, cancelled };
@@ -473,7 +538,7 @@ async function runJob(sender, job) {
 
 // 用 ffmpeg -i 的 stderr 探测媒体信息（时长、有无音视频流、分辨率）
 async function probeFile(file) {
-  const info = { file, duration: 0, hasVideo: false, hasAudio: false, width: 0, height: 0 };
+  const info = { file, duration: 0, hasVideo: false, hasAudio: false, width: 0, height: 0, audioTracks: [] };
   try {
     const { stderr } = await runFfmpeg(['-hide_banner', '-i', file]);
     info.duration = parseDuration(stderr);
@@ -492,6 +557,8 @@ async function probeFile(file) {
         }
       } else if (line.includes('Audio:')) {
         info.hasAudio = true;
+        const lang = line.match(/Stream #\d+:\d+(?:\[[^\]]*\])?\(([^)]+)\)/);
+        info.audioTracks.push({ language: lang ? lang[1] : 'und' });
       }
     }
   } catch {
@@ -507,7 +574,7 @@ function buildMergeOutputPath(job) {
   const pad = (n) => String(n).padStart(2, '0');
   const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
     + `-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-  return path.join(dir, `merged_${ts}.${job.format}`);
+  return uniqueOutputPath(path.join(dir, `merged_${ts}.${job.format}`), new Set(job.inputs.map(pathKey)));
 }
 
 // 字幕时长探测：ffmpeg -i 对字幕文件输出 Duration: N/A，
@@ -539,16 +606,22 @@ function probeSubtitleDuration(file) {
   }
 }
 
-// subtitles 滤镜的路径转义：统一为正斜杠，: 转义为 \:（滤镜参数分隔符），
-// 整体加单引号保护空格等字符；单引号本身转义为 \'
+// 先转义滤镜选项值，再转义整条滤镜图；spawn 参数数组不需要 shell 层转义。
 function escapeSubtitleFilterPath(p) {
-  return p.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
+  const normalized = process.platform === 'win32' ? p.replace(/\\/g, '/') : p;
+  return normalized.replace(/[\\':\s]/g, '\\$&').replace(/[\\'\[\],;\s]/g, '\\$&');
 }
 
 // 构造合并命令：混合队列用 concat filter 重编码拼接；
 // 纯音频段生成等长黑屏视频（color 源），无音频的视频段生成静音（anullsrc）；
 // 可选字幕：burn 烧录进画面（subtitles 滤镜），embed 内嵌为字幕轨（-c:s copy/mov_text）
 function buildMergeArgs(job, probes, useX264) {
+  validateAudioSelection(job, probes, true);
+  const selected = selectedAudioTrack(job);
+  // 按音轨序号拼接，缺少对应音轨的片段补静音；全部无音轨时保留原有静音输出。
+  const trackIndices = selected === null
+    ? Array.from({ length: Math.max(1, ...probes.map((p) => p.audioTracks.length)) }, (_, i) => i)
+    : [selected];
   const sub = job.subtitle && job.subtitle.path ? job.subtitle : null;
   const burn = sub && sub.mode === 'burn';
   const anyVideo = probes.some((p) => p.hasVideo);
@@ -557,7 +630,7 @@ function buildMergeArgs(job, probes, useX264) {
   const W = ref ? Math.floor(ref.width / 2) * 2 : 1280;
   const H = ref ? Math.floor(ref.height / 2) * 2 : 720;
 
-  const args = ['-hide_banner', '-y'];
+  const args = ['-hide_banner', '-n'];
   for (const f of job.inputs) args.push('-i', f);
   // 内嵌字幕轨时字幕作为普通输入，紧跟媒体输入之后（lavfi 输入索引相应后移）
   const subInputIdx = sub && !burn ? job.inputs.length : -1;
@@ -571,28 +644,30 @@ function buildMergeArgs(job, probes, useX264) {
   probes.forEach((p, i) => {
     if (anyVideo) {
       if (p.hasVideo) {
-        filters.push(`[${i}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,`
+        filters.push(`[${i}:V:0]setpts=PTS-STARTPTS,scale=${W}:${H}:force_original_aspect_ratio=decrease,`
           + `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v${i}]`);
       } else {
         // 纯音频段：黑屏视频
         lavfi.push({ kind: 'black', duration: p.duration });
         filters.push(`[${lavfiBase + lavfi.length - 1}:v]format=yuv420p,setsar=1[v${i}]`);
       }
-      if (p.hasAudio) {
-        filters.push(`[${i}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`);
-      } else {
-        // 无音频轨的视频段：静音
-        lavfi.push({ kind: 'silence', duration: p.duration });
-        filters.push(`[${lavfiBase + lavfi.length - 1}:a]`
-          + 'aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo'
-          + `[a${i}]`);
-      }
-      segs.push(`[v${i}][a${i}]`);
-    } else {
-      // 纯音频队列：只拼接音频
-      filters.push(`[${i}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`);
-      segs.push(`[a${i}]`);
     }
+    const audioLabels = [];
+    trackIndices.forEach((track, outIndex) => {
+      let source;
+      if (p.audioTracks[track]) {
+        source = `${i}:a:${track}`;
+      } else {
+        if (!(p.duration > 0)) throw new Error('缺失音轨的片段无法读取时长，不能补静音');
+        lavfi.push({ kind: 'silence', duration: p.duration });
+        source = `${lavfiBase + lavfi.length - 1}:a`;
+      }
+      const label = `a${i}_${outIndex}`;
+      filters.push(`[${source}]asetpts=PTS-STARTPTS,aresample=44100,`
+        + `aformat=sample_fmts=fltp:channel_layouts=stereo[${label}]`);
+      audioLabels.push(`[${label}]`);
+    });
+    segs.push((anyVideo ? `[v${i}]` : '') + audioLabels.join(''));
   });
 
   // lavfi 输入按索引顺序追加在媒体（与字幕）输入之后
@@ -607,15 +682,17 @@ function buildMergeArgs(job, probes, useX264) {
 
   // 硬字幕：拼接完成后再经 subtitles 滤镜烧录进画面
   const catVideo = burn ? 'vcat' : 'vout';
-  filters.push(`${segs.join('')}concat=n=${probes.length}:v=${anyVideo ? 1 : 0}:a=1`
-    + (anyVideo ? `[${catVideo}][aout]` : '[aout]'));
+  const audioOutputs = trackIndices.map((_, i) => `[aout${i}]`);
+  filters.push(`${segs.join('')}concat=n=${probes.length}:v=${anyVideo ? 1 : 0}:a=${trackIndices.length}`
+    + (anyVideo ? `[${catVideo}]` : '') + audioOutputs.join(''));
   if (burn) {
-    filters.push(`[vcat]subtitles='${escapeSubtitleFilterPath(sub.path)}'[vout]`);
+    filters.push(`[vcat]subtitles=filename=${escapeSubtitleFilterPath(sub.path)}[vout]`);
   }
   args.push('-filter_complex', filters.join(';'));
 
   if (anyVideo) {
-    args.push('-map', '[vout]', '-map', '[aout]');
+    args.push('-map', '[vout]');
+    for (const label of audioOutputs) args.push('-map', label);
     // 软字幕：字幕轨直接映射进容器，MKV 保留原编码，MP4 统一转 mov_text
     if (subInputIdx >= 0) args.push('-map', `${subInputIdx}:s`);
     if (useX264) {
@@ -624,8 +701,13 @@ function buildMergeArgs(job, probes, useX264) {
     args.push('-c:a', 'aac');
     if (subInputIdx >= 0) args.push('-c:s', job.format === 'mkv' ? 'copy' : 'mov_text');
   } else {
-    args.push('-map', '[aout]');
+    for (const label of audioOutputs) args.push('-map', label);
   }
+  trackIndices.forEach((track, outIndex) => {
+    const languages = new Set(probes.map((p) => p.audioTracks[track]?.language).filter(Boolean));
+    // 同一序号语言一致才写入标签，避免为不同语言的拼接轨误标语言。
+    if (languages.size === 1) args.push(`-metadata:s:a:${outIndex}`, `language=${[...languages][0]}`);
+  });
 
   args.push('-nostats', '-progress', 'pipe:1', buildMergeOutputPath(job));
   return { args, anyVideo };
@@ -666,7 +748,13 @@ async function runMerge(sender, job) {
   const caps = await getCapabilities();
   const useX264 = caps.encoders.video.some((e) => e.name === 'libx264');
 
-  const { args } = buildMergeArgs(job, probes, useX264);
+  if (cancelled) return { total: 1, done: 0, cancelled: true };
+  let args;
+  try {
+    ({ args } = buildMergeArgs(job, probes, useX264));
+  } catch (err) {
+    return fail(err.message);
+  }
   const totalDuration = probes.reduce((sum, p) => sum + p.duration, 0);
   const output = args[args.length - 1];
 
@@ -688,10 +776,11 @@ async function runMerge(sender, job) {
 // 起点落在 <= start 的最近关键帧，可能有少许偏差（界面已提示）。
 function buildClipArgs(job, outPath) {
   const duration = Math.max(0, job.end - job.start);
-  return ['-hide_banner', '-y',
+  return ['-hide_banner', '-n',
     '-ss', String(job.start),
     '-i', job.input,
     '-t', String(duration),
+    '-map', '0',
     '-c', 'copy', '-avoid_negative_ts', 'make_zero',
     '-nostats', '-progress', 'pipe:1', outPath];
 }

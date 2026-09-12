@@ -59,11 +59,12 @@
 
   function formatTime(s) {
     if (!s || !isFinite(s) || s < 0) s = 0;
-    s = Math.floor(s);
+    const millis = Math.round(s * 1000);
+    s = Math.floor(millis / 1000);
     const h = Math.floor(s / 3600);
     const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
     const sec = String(s % 60).padStart(2, '0');
-    return `${h}:${m}:${sec}`;
+    return `${h}:${m}:${sec}.${String(millis % 1000).padStart(3, '0')}`;
   }
 
   // 支持 h:mm:ss / m:ss / 秒数（可带小数）；无法识别返回 null
@@ -163,12 +164,12 @@
   bindTimeInput(els.inputEnd, false);
 
   els.setStart.addEventListener('click', () => {
-    setRange(Math.min(Math.floor(els.video.currentTime), Number(els.sliderEnd.value)),
+    setRange(Math.min(els.video.currentTime, Number(els.sliderEnd.value)),
       Number(els.sliderEnd.value));
   });
   els.setEnd.addEventListener('click', () => {
     setRange(Number(els.sliderStart.value),
-      Math.max(Math.ceil(els.video.currentTime), Number(els.sliderStart.value)));
+      Math.max(els.video.currentTime, Number(els.sliderStart.value)));
   });
 
   // ---------- 播放控制 ----------
@@ -336,7 +337,7 @@
 
   // ---------- 截取流程 ----------
   async function startClip() {
-    if (!state.file || !state.playable) return;
+    if (state.busy || !state.file || !state.playable) return;
     const start = parseTime(els.inputStart.value);
     const end = parseTime(els.inputEnd.value);
     if (start === null || end === null || end <= start) {

@@ -37,6 +37,7 @@
     subOptions: $('subtitle-options'),
     submode: $('sel-submode'),
     format: $('sel-format'),
+    audioTrack: $('input-audio-track'),
     outdir: $('input-outdir'),
     pickDir: $('btn-pick-dir'),
     start: $('btn-start'),
@@ -237,6 +238,11 @@
   }
 
   async function startMerge() {
+    if (state.running) return;
+    if (!els.audioTrack.checkValidity()) {
+      els.audioTrack.reportValidity();
+      return;
+    }
     const minFiles = state.subtitle ? 1 : 2;
     if (state.files.length < minFiles) return;
     if (state.subtitle && !anyVideo()) {
@@ -259,6 +265,7 @@
       inputs: state.files.map((f) => f.path),
       outputDir: state.outputDir,
       format: els.format.value,
+      audioTrack: els.audioTrack.value,
       subtitle: state.subtitle ? { path: state.subtitle.path, mode: els.submode.value } : null,
     };
 

@@ -58,6 +58,10 @@
             <span class="form-label">音频编码</span>
             <select id="sel-acodec"></select>
           </label>
+          <label class="form-item" id="item-audio-track">
+            <span class="form-label">音轨序号（留空保留全部）</span>
+            <input id="input-audio-track" type="number" min="1" step="1" placeholder="如 2：只保留第 2 条音轨" />
+          </label>
           <label class="form-item">
             <span class="form-label">硬件加速（解码）</span>
             <select id="sel-hwaccel"></select>
@@ -82,6 +86,7 @@
           </label>
         </div>
         <p id="caps-info" class="caps-info"></p>
+        <p class="caps-info">音轨序号按每个输入文件从 1 开始。MP3、FLAC、WAV、FLV 的多音轨输入需明确选轨；已有文件会自动避开，不覆盖。</p>
       </section>
 
       <!-- 进度与操作 -->

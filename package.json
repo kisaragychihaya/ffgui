@@ -1,9 +1,10 @@
 {
   "name": "ffgui",
   "productName": "FFGui",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "main": "index.js",
   "scripts": {
+    "test": "node --test scripts/regression.test.cjs",
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make"

@@ -119,7 +119,7 @@ forge.config.js     Electron Forge 配置（含压缩钩子与 Fuses）
 - `npm run package` — 打包到 `out/FFGui-win32-x64/`（packageAfterCopy 钩子会压缩 JS/HTML/CSS）
 - `npm run make` — 生成安装包（Windows 为 Squirrel）
 
-没有测试框架、没有 lint/format 配置。
+`npm test` 使用 Node 内置测试运行器（`scripts/regression.test.cjs`），需要 PATH 中有 ffmpeg/ffprobe，或设置 FFMPEG/FFPROBE。没有 lint/format 配置。
 
 ## 部署 / CI
 
@@ -170,5 +170,15 @@ forge.config.js     Electron Forge 配置（含压缩钩子与 Fuses）
 
 ## 测试方式
 
-无自动化测试。手工验证方式：`npm start` 启动应用，使用 `test_media/` 下的示例文件走一遍
+自动化回归使用 `npm test`，生成独立临时媒体并自动清理。手工验证方式：`npm start` 启动应用，使用 `test_media/` 下的示例文件走一遍
 转码流程（含拖拽添加、取消、进度显示），并在主进程控制台观察 `[ffgui]` / `[ffmpeg]` 日志。
+
+## 音轨与输出规则（修复后）
+
+- `job.audioTrack` 留空保留全部音轨，否则为从 1 开始的音轨序号。MP3/FLAC/WAV/FLV 的多音轨输入须明确选轨。
+- `probeFile` 额外返回 `audioTracks`（按顺序排列的语言信息）。合并按序号逐轨 concat，缺轨补静音；每轨仍统一 44100 Hz stereo，界面明确提示规则。
+- 转码显式映射视频、音频；MKV 同时映射字幕附件，其他转码容器不隐式带入附加流。截取使用 `-map 0 -c copy` 保留全部流。
+- 输出路径避开全部输入、已有文件与本批目标，重名增加编号；转码/合并/截取使用 `-n`。不要改回无条件 `-y`。预览缓存与用户在保存对话框中选定的截图仍可覆盖。
+- 进度字段跨 stdout 数据块保留，progress 事件携带 input；成功任务还必须收到 progress=end（部分 FFmpeg 构建拒绝覆盖也返回退出码 0）。
+- 字幕路径分两层转义：先滤镜选项值，再滤镜图；调用方不再额外加单引号。
+- 截取输入框保留毫秒，三个时间滑块步长为 0.001 秒。

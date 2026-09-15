@@ -28,7 +28,9 @@ jobs:
         run: |
           # gyan.dev 直链在 CI 上会被反爬拦截（GET 返回 HTML 而非压缩包），
           # 改走其官方 GitHub 镜像 GyanD/codexffmpeg 的最新 release
-          $rel = Invoke-RestMethod 'https://api.github.com/repos/GyanD/codexffmpeg/releases/latest'
+          $headers = @{ Authorization = 'Bearer ${{ secrets.GITHUB_TOKEN }}' }
+          $rel = Invoke-RestMethod 'https://api.github.com/repos/GyanD/codexffmpeg/releases/latest' -Headers $headers
+          if ($rel.message) { throw "GitHub API 返回错误：$($rel.message)" }
           $asset = $rel.assets | Where-Object { $_.name -match 'full_build\.7z$' } | Select-Object -First 1
           if (-not $asset) { throw 'codexffmpeg 最新 release 中未找到 full_build.7z' }
           Write-Host "下载 $($asset.name)"
@@ -80,7 +82,9 @@ jobs:
         run: |
           # Windows ARM64 构建来自 tordona/ffmpeg-win-arm64（gyan.dev 无 arm64 构建），
           # 取最新 release 的 full static 包（与 x64 的 full_build 能力对齐）
-          $rel = Invoke-RestMethod 'https://api.github.com/repos/tordona/ffmpeg-win-arm64/releases/latest'
+          $headers = @{ Authorization = 'Bearer ${{ secrets.GITHUB_TOKEN }}' }
+          $rel = Invoke-RestMethod 'https://api.github.com/repos/tordona/ffmpeg-win-arm64/releases/latest' -Headers $headers
+          if ($rel.message) { throw "GitHub API 返回错误：$($rel.message)" }
           $asset = $rel.assets | Where-Object { $_.name -match 'full-static-win-arm64\.7z$' } | Select-Object -First 1
           if (-not $asset) { throw 'ffmpeg-win-arm64 最新 release 中未找到 full-static-win-arm64.7z' }
           Write-Host "下载 $($asset.name)"
@@ -140,8 +144,12 @@ jobs:
           # dylibbundler 收集，二进制引用 @executable_path/../lib)，
           # bin/ 与 lib/ 相对布局不能变，因此两个目录原样放入项目 bin/ 下
           # （bin/bin/ffmpeg + bin/lib/）
-          url=$(curl -s https://api.github.com/repos/kisaragychihaya/ffmpeg_build_mac/releases/latest \
-            | node -e "const r=JSON.parse(require('fs').readFileSync(0,'utf8'));const a=(r.assets||[]).find(x=>/macos-arm64-static\.tar\.gz$/.test(x.name));process.stdout.write(a?a.browser_download_url:'')")
+          # 匿名调用 api.github.com 在 runner 共享出口 IP 下易触发限流（返回无 assets
+          # 的错误对象，被误判成"未找到资产"），带 GITHUB_TOKEN 换取更高配额，
+          # 并让 API 错误信息直接暴露出来
+          url=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/kisaragychihaya/ffmpeg_build_mac/releases/latest \
+            | node -e "const r=JSON.parse(require('fs').readFileSync(0,'utf8'));if(r.message){console.error('GitHub API 错误：'+r.message);process.exit(1)}const a=(r.assets||[]).find(x=>/macos-arm64-static\.tar\.gz$/.test(x.name));process.stdout.write(a?a.browser_download_url:'')")
           if [ -z "$url" ]; then echo 'ffmpeg_build_mac 最新 release 中未找到 macos-arm64-static tar.gz'; exit 1; fi
           echo "下载 $url"
           curl -L -o ffmac.tar.gz "$url"

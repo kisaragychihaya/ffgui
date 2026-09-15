@@ -466,6 +466,8 @@ body {
 }
 
 .modal {
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
   width: 520px;
   max-width: calc(100vw - 64px);
   background: var(--card-bg);
@@ -867,4 +869,10 @@ body {
   margin-top: 12px;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+/* 转码表单的隐藏规则必须高于 .form-item 的 display:flex。 */
+.convert-view .form-item.hidden,
+#advanced-modal .form-item.hidden {
+  display: none;
 }

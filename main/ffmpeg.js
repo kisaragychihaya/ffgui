@@ -275,7 +275,46 @@ function validateAudioSelection(job, probes, merging = false) {
   }
 }
 
-function buildArgs(job, input, outPath) {
+// 预设在主进程再次落实，不能只依赖界面填值；必须在生成输出扩展名前调用。
+function normalizeConvertJob(job) {
+  if (!job.devicePreset) return { ...job };
+  const sizes = { 'ipod4-540': { w: 960, h: 540 }, 'ipod4-720': { w: 1280, h: 720 } };
+  if (!sizes[job.devicePreset]) throw new Error('未知的设备预设');
+  return { ...job, format: 'mp4', vcodec: 'libx264', acodec: 'aac', hwaccel: '',
+    pixFmt: 'yuv420p', h264Profile: 'main', h264Level: '3.1', fps: '', maxFps: 30,
+    scale: sizes[job.devicePreset], fitScale: true, vbitrate: 2000, vrateMode: 'vbr',
+    maxrate: 3000, bufsize: 6000, abitrate: 128, channels: 2, sampleRate: 48000 };
+}
+
+function validateConvertOptions(job) {
+  const video = !AUDIO_ONLY_FORMATS.has(job.format) && job.vcodec !== 'none';
+  const audio = !VIDEO_ONLY_FORMATS.has(job.format) && job.acodec !== 'none';
+  if (video) {
+    if (job.vcodec === 'copy' && (job.pixFmt || job.h264Profile || job.h264Level || job.fps || job.scale || job.hdr2sdr)) {
+      throw new Error('直接复制视频不能改变位深、Profile、Level、帧率、分辨率或动态范围，请选择编码器');
+    }
+    if (job.pixFmt && !['yuv420p', 'yuv420p10le'].includes(job.pixFmt)) throw new Error('不支持的像素格式');
+    if (job.h264Profile || job.h264Level) {
+      if (job.vcodec !== 'libx264') throw new Error('当前 Profile/Level 选项仅用于 H.264 (libx264)');
+      if (job.h264Profile && !['baseline', 'main', 'high', 'high10'].includes(job.h264Profile)) throw new Error('不支持的 H.264 Profile');
+      if (job.h264Level && !['3.0', '3.1', '4.0', '4.1', '4.2', '5.0', '5.1', '5.2'].includes(job.h264Level)) throw new Error('不支持的 H.264 Level');
+      if (job.pixFmt === 'yuv420p10le' && ['baseline', 'main', 'high'].includes(job.h264Profile)) {
+        throw new Error('所选 H.264 Profile 不支持 10-bit，请选择 8-bit 或 High 10');
+      }
+    }
+    if (job.fps && !['23.976', '24', '25', '29.97', '30', '50', '59.94', '60'].includes(String(job.fps))) throw new Error('不支持的帧率');
+  }
+  if (audio) {
+    if (job.acodec === 'copy' && (job.channels || job.sampleRate)) throw new Error('直接复制音频不能改变声道或采样率');
+    if (job.channels && ![1, 2, 6].includes(Number(job.channels))) throw new Error('不支持的声道数');
+    if (job.sampleRate && ![22050, 32000, 44100, 48000, 96000].includes(Number(job.sampleRate))) throw new Error('不支持的采样率');
+  }
+  if (job.format === 'mp3' && job.id3Version && !['3', '4'].includes(String(job.id3Version))) throw new Error('ID3 版本必须为 2.3 或 2.4');
+}
+
+function buildArgs(job, input, outPath, probe = {}) {
+  job = normalizeConvertJob(job);
+  validateConvertOptions(job);
   const args = ['-hide_banner', '-n'];
   if (job.hwaccel) {
     args.push('-hwaccel', job.hwaccel);
@@ -284,12 +323,20 @@ function buildArgs(job, input, outPath) {
 
   const audioOnly = AUDIO_ONLY_FORMATS.has(job.format);
   const videoOnly = VIDEO_ONLY_FORMATS.has(job.format);
+  // 只映射探测到的 attached pic，绝不能把音乐视频当作封面。
+  // MP3/M4A/FLAC 接受 JPEG/PNG 封面；其他图片编码转换为 JPEG。
+  const covers = audioOnly && job.preserveCover !== false && ['mp3', 'm4a', 'flac'].includes(job.format)
+    ? (probe.covers || []) : [];
   // 显式映射：默认保留全部音轨；序号按每个输入文件的音轨顺序从 1 开始。
   if (!audioOnly && job.vcodec !== 'none') args.push('-map', '0:V:0?');
   if (!videoOnly && job.acodec !== 'none') {
     const track = selectedAudioTrack(job);
-    args.push('-map', track === null ? '0:a?' : `0:a:${track}`);
+    args.push('-map', track === null ? (job.devicePreset ? '0:a:0?' : '0:a?') : `0:a:${track}`);
   }
+  for (const cover of covers) args.push('-map', `0:${cover.index}`);
+  args.push('-map_metadata', job.preserveMetadata === false ? '-1' : '0');
+  if (job.preserveMetadata === false) args.push('-map_metadata:s:a', '-1');
+  if (job.format === 'mp3') args.push('-id3v2_version', String(job.id3Version || 3));
   // MKV 同时保留字幕及字体附件；其他容器不盲目复制可能不兼容的附加流。
   if (!audioOnly && !videoOnly && job.vcodec !== 'none') {
     if (job.format === 'mkv') args.push('-map', '0:s?', '-map', '0:t?', '-c:s', 'copy', '-c:t', 'copy');
@@ -302,7 +349,12 @@ function buildArgs(job, input, outPath) {
 
   // 视频
   if (audioOnly || job.vcodec === 'none') {
-    args.push('-vn');
+    if (covers.length) {
+      covers.forEach((cover, i) => {
+        args.push(`-c:v:${i}`, ['png', 'mjpeg'].includes(cover.codec) ? 'copy' : 'mjpeg',
+          `-disposition:v:${i}`, 'attached_pic');
+      });
+    } else args.push('-vn');
   } else if (job.vcodec && job.vcodec !== 'auto') {
     if (job.vcodec === 'copy') {
       args.push('-c:v', 'copy');
@@ -351,11 +403,27 @@ function buildArgs(job, input, outPath) {
     // acodec 为 auto 时同样可指定音频码率
     args.push('-b:a', `${abitrate}k`);
   }
+  if (!videoOnly && job.acodec !== 'none' && job.acodec !== 'copy') {
+    if (job.channels) args.push('-ac', String(job.channels));
+    if (job.sampleRate) args.push('-ar', String(job.sampleRate));
+    if (job.devicePreset) args.push('-profile:a', 'aac_low');
+  }
 
   // 视频滤镜链：仅在重编码视频时生效（copy/无视频/纯音频格式下跳过）
   // - HDR→SDR 勾选时加入色调映射链（zscale 线性光 → tonemap → bt709），未勾选完全不传
   // - 分辨率缩放（scale）追加在链尾
   const canFilter = !audioOnly && job.vcodec !== 'copy' && job.vcodec !== 'none';
+  if (canFilter) {
+    // Main/Baseline/High 默认用 8-bit，避免继承源文件的 10-bit 导致编码失败。
+    const pixFmt = job.pixFmt || (['baseline', 'main', 'high'].includes(job.h264Profile) ? 'yuv420p' : '');
+    if (pixFmt) args.push('-pix_fmt', pixFmt);
+    if (job.h264Profile) args.push('-profile:v', job.h264Profile);
+    if (job.h264Level) args.push('-level:v', job.h264Level);
+    const rates = { '23.976': '24000/1001', '29.97': '30000/1001', '59.94': '60000/1001' };
+    if (job.fps) args.push('-r', rates[job.fps] || String(job.fps), '-fps_mode', 'cfr');
+    else if (job.maxFps) args.push('-fpsmax', String(job.maxFps));
+    if (job.maxrate) args.push('-maxrate', `${job.maxrate}k`, '-bufsize', `${job.bufsize}k`);
+  }
   const vf = [];
   if (canFilter && job.hdr2sdr) {
     vf.push(
@@ -372,7 +440,9 @@ function buildArgs(job, input, outPath) {
     const h = Math.floor(Number(scale.h)) || 0;
     const percent = Number(scale.percent) || 0;
     if (w > 0 && h > 0) {
-      vf.push(`scale=${w}:${h}`);
+      vf.push(job.fitScale
+        ? `scale=${w}:${h}:force_original_aspect_ratio=decrease:force_divisible_by=2:reset_sar=1`
+        : `scale=${w}:${h}`);
     } else if (percent > 0 && percent !== 100) {
       // 百分比缩放；取偶数尺寸避免 yuv420p 编码器报错
       vf.push(`scale=trunc(iw*${percent}/200)*2:trunc(ih*${percent}/200)*2`);
@@ -381,6 +451,8 @@ function buildArgs(job, input, outPath) {
   if (vf.length > 0) {
     args.push('-vf', vf.join(','));
   }
+  if (job.devicePreset) args.push('-movflags', '+faststart');
+  if (job.sampleOnly) args.push('-t', '30');
 
   args.push('-nostats', '-progress', 'pipe:1', outPath);
   return args;
@@ -496,15 +568,20 @@ function runFfmpegTask({ args, index, label, output, getDuration, onStderrText, 
 }
 
 async function convertOne(job, input, index, send, outPath) {
+  let args;
   try {
     const probe = await probeFile(input);
     validateAudioSelection(job, [probe]);
+    args = buildArgs(job, input, outPath, probe);
+    if (probe.covers.length && job.preserveCover !== false && AUDIO_ONLY_FORMATS.has(job.format)
+        && !['mp3', 'm4a', 'flac'].includes(job.format)) {
+      send({ type: 'file-warning', index, input, warning: '此输出格式尚未实现封面保留；需要封面时请选择 MP3、M4A 或 FLAC' });
+    }
     if (cancelled) return { ok: false, cancelled: true };
   } catch (err) {
     send({ type: 'file-error', index, input, error: err.message });
     return { ok: false };
   }
-  const args = buildArgs(job, input, outPath);
   // 时长从 stderr 的 Duration 行惰性解析
   let duration = 0;
   return runFfmpegTask({
@@ -520,6 +597,7 @@ async function convertOne(job, input, index, send, outPath) {
 }
 
 async function runJob(sender, job) {
+  job = normalizeConvertJob(job);
   cancelled = false;
   const reserved = new Set(job.inputs.map(pathKey));
   const outputs = job.inputs.map((input) => buildOutputPath(input, job.outputDir, job.format, reserved));
@@ -538,7 +616,7 @@ async function runJob(sender, job) {
 
 // 用 ffmpeg -i 的 stderr 探测媒体信息（时长、有无音视频流、分辨率）
 async function probeFile(file) {
-  const info = { file, duration: 0, hasVideo: false, hasAudio: false, width: 0, height: 0, audioTracks: [] };
+  const info = { file, duration: 0, hasVideo: false, hasAudio: false, width: 0, height: 0, audioTracks: [], covers: [] };
   try {
     const { stderr } = await runFfmpeg(['-hide_banner', '-i', file]);
     info.duration = parseDuration(stderr);
@@ -546,7 +624,12 @@ async function probeFile(file) {
       if (!line.includes('Stream #')) continue;
       if (line.includes('Video:')) {
         // 封面图（attached pic）不算视频流
-        if (line.includes('attached pic')) continue;
+        if (line.includes('attached pic')) {
+          const index = line.match(/Stream #\d+:(\d+)/);
+          const codec = line.match(/Video:\s*(\w+)/);
+          if (index && codec) info.covers.push({ index: Number(index[1]), codec: codec[1] });
+          continue;
+        }
         info.hasVideo = true;
         if (!info.width) {
           const m = line.match(/,\s*(\d{2,5})x(\d{2,5})[\s[]/);

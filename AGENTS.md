@@ -38,9 +38,24 @@ main/ffmpeg.js      主进程核心：
                       转码页下拉框会剔除；首页"清除硬件信息缓存"按钮可删除缓存重新探测
                     - 转码任务：spawn ffmpeg，参数含 -nostats -progress pipe:1，
                       解析 stdout 的 key=value 进度块，通过 'ffgui:convert-event'
-                      推送 file-start / progress / file-done / file-error 事件
+                      推送 file-start / progress / file-done / file-warning /
+                      file-error 事件
                       （spawn/日志/进度解析封装在 runFfmpegTask，转码、合并、截取、
-                      预览共用）；质量档仅对 CRF_ENCODERS 传 -crf；VideoToolbox
+                      预览共用）；设备预设（job.devicePreset，如 ipod4-540/720）
+                      在主进程由 normalizeConvertJob 二次落实（不能被旧表单值
+                      覆盖，须在分配输出扩展名前调用），锁定 MP4/libx264
+                      Main 3.1/8-bit/最高 30 fps/AAC-LC 双声道 + VBV + faststart；
+                      自定义高级参数（像素格式、Profile/Level、固定帧率、声道、
+                      采样率、ID3 版本、标签/封面开关、30 秒试转）由
+                      validateConvertOptions 白名单校验，复制流与转码参数冲突
+                      直接报错；纯音频输出（MP3/M4A/FLAC）默认保留内嵌封面：
+                      probeFile 返回 covers[]（attached pic 的流编号与编码），
+                      只显式映射封面流，JPEG/PNG 原样复制、其他转 mjpeg，
+                      多张封面保留类型；WAV/OGG/OPUS 不保留封面，仅发
+                      file-warning 提示；-map_metadata 0 保留文字标签
+                      （可关），MP3 显式 -id3v2_version（默认 3）；预设用到
+                      -fpsmax 与 scale 的 reset_sar，需要较新 FFmpeg（5.1+/6.1+）
+                      质量档仅对 CRF_ENCODERS 传 -crf；VideoToolbox
                       编码器不支持 -crf，在 darwin+arm64 下改传 -q:v（VT_QSCALE_MAP，
                       仅 h264/hevc_videotoolbox，ProRes 画质由 profile 决定故排除），
                       Intel Mac 传 -q:v 会报错故留空走编码器默认值；nvenc/qsv/amf
@@ -88,7 +103,9 @@ html/merge.html     合并页（队列拖动排序、混合队列黑屏段拼接
 html/clip.html      截取页（CSP 额外放行 media-src blob: file: 以播放本地文件）
 html/js/index.js    首页视图切换与清缓存逻辑
 html/js/convert.js  转码页全部逻辑：候选格式/编码器清单是硬编码的，但会按主进程
-                    探测到的真实能力过滤后填充下拉框
+                    探测到的真实能力过滤后填充下拉框；设备预设选中时锁定并填写
+                    兼容参数（切回自定义时恢复原设置），纯音频格式自动隐藏视频
+                    相关表单项，提交前校验分辨率格式
 html/js/merge.js    合并页全部逻辑：字幕单槽位拖放（拖到拼接队列区域的字幕文件会
                     自动转投字幕槽位），开始前校验字幕时长与合并总时长，
                     不匹配时弹警告由用户确认
@@ -175,7 +192,8 @@ forge.config.js     Electron Forge 配置（含压缩钩子与 Fuses）
 
 ## 音轨与输出规则（修复后）
 
-- `job.audioTrack` 留空保留全部音轨，否则为从 1 开始的音轨序号。MP3/FLAC/WAV/FLV 的多音轨输入须明确选轨。
+- `job.audioTrack` 留空保留全部音轨，否则为从 1 开始的音轨序号。MP3/FLAC/WAV/FLV 的多音轨输入须明确选轨。设备预设例外：留空取第 1 轨（映射 `0:a:0?`）。
+- 纯音频输出默认 `-map_metadata 0` 保留文字标签、映射探测到的 attached pic 封面流（JPEG/PNG copy，其他转 mjpeg）；MP3 显式 `-id3v2_version`（默认 3）。封面只支持 MP3/M4A/FLAC，其余音频格式发 file-warning 不静默。
 - `probeFile` 额外返回 `audioTracks`（按顺序排列的语言信息）。合并按序号逐轨 concat，缺轨补静音；每轨仍统一 44100 Hz stereo，界面明确提示规则。
 - 转码显式映射视频、音频；MKV 同时映射字幕附件，其他转码容器不隐式带入附加流。截取使用 `-map 0 -c copy` 保留全部流。
 - 输出路径避开全部输入、已有文件与本批目标，重名增加编号；转码/合并/截取使用 `-n`。不要改回无条件 `-y`。预览缓存与用户在保存对话框中选定的截图仍可覆盖。

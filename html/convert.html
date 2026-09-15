@@ -41,6 +41,15 @@
           <h3>输出设置</h3>
           <button id="btn-advanced" class="btn" type="button">高级参数…</button>
         </div>
+        <label class="form-item">
+          <span class="form-label">设备预设</span>
+          <select id="sel-device-preset">
+            <option value="">自定义</option>
+            <option value="ipod4-540">iPod touch 4 / iOS 6 · 最高 960×540</option>
+            <option value="ipod4-720">iPod touch 4 / iOS 6 · 最高 1280×720</option>
+          </select>
+        </label>
+        <p id="preset-tip" class="caps-info hidden">MP4 · H.264 Main 3.1 · 8-bit · 保持比例 · 最高 30 fps · AAC 双声道 128 kbps；默认第 1 音轨，可手动选轨。设备预设锁定兼容参数；其他机型请核对规格。10-bit 不一定是 HDR，色调映射需按源文件选择。</p>
         <div class="form-grid settings-grid">
           <label class="form-item">
             <span class="form-label">输出格式</span>
@@ -59,7 +68,7 @@
             <select id="sel-acodec"></select>
           </label>
           <label class="form-item" id="item-audio-track">
-            <span class="form-label">音轨序号（留空保留全部）</span>
+            <span class="form-label" id="audio-track-label">音轨序号（留空保留全部）</span>
             <input id="input-audio-track" type="number" min="1" step="1" placeholder="如 2：只保留第 2 条音轨" />
           </label>
           <label class="form-item">
@@ -85,6 +94,7 @@
             </span>
           </label>
         </div>
+        <label class="check-line"><input id="chk-sample-only" type="checkbox" />仅生成前 30 秒测试片段（先在目标设备验证）</label>
         <p id="caps-info" class="caps-info"></p>
         <p class="caps-info">音轨序号按每个输入文件从 1 开始。MP3、FLAC、WAV、FLV 的多音轨输入需明确选轨；已有文件会自动避开，不覆盖。</p>
       </section>
@@ -131,8 +141,83 @@
           <span class="form-label">分辨率（宽x高 或百分比，默认 100%）</span>
           <input id="input-scale" type="text" placeholder="如 1280x720 或 50%" />
         </label>
+        <label class="form-item">
+          <span class="form-label">像素格式 / 位深</span>
+          <select id="sel-pix-fmt">
+            <option value="">自动（可能沿用源位深）</option>
+            <option value="yuv420p">YUV 4:2:0 · 8-bit</option>
+            <option value="yuv420p10le">YUV 4:2:0 · 10-bit</option>
+          </select>
+        </label>
+        <label class="form-item">
+          <span class="form-label">H.264 Profile（仅 libx264）</span>
+          <select id="sel-h264-profile">
+            <option value="">自动</option>
+            <option value="baseline">Baseline</option>
+            <option value="main">Main</option>
+            <option value="high">High</option>
+            <option value="high10">High 10</option>
+          </select>
+        </label>
+        <label class="form-item">
+          <span class="form-label">H.264 Level（仅 libx264）</span>
+          <select id="sel-h264-level">
+            <option value="">自动</option>
+            <option value="3.0">3.0</option>
+            <option value="3.1">3.1</option>
+            <option value="4.0">4.0</option>
+            <option value="4.1">4.1</option>
+            <option value="4.2">4.2</option>
+            <option value="5.0">5.0</option>
+            <option value="5.1">5.1</option>
+            <option value="5.2">5.2</option>
+          </select>
+        </label>
+        <label class="form-item">
+          <span class="form-label" id="fps-label">输出帧率（固定帧率）</span>
+          <select id="sel-fps">
+            <option value="">自动 / 保持源帧率</option>
+            <option value="23.976">23.976 fps</option>
+            <option value="24">24 fps</option>
+            <option value="25">25 fps</option>
+            <option value="29.97">29.97 fps</option>
+            <option value="30">30 fps</option>
+            <option value="50">50 fps</option>
+            <option value="59.94">59.94 fps</option>
+            <option value="60">60 fps</option>
+          </select>
+        </label>
+        <label class="form-item">
+          <span class="form-label">输出声道</span>
+          <select id="sel-channels">
+            <option value="">保持源声道</option>
+            <option value="1">单声道</option>
+            <option value="2">双声道</option>
+            <option value="6">5.1（6 声道）</option>
+          </select>
+        </label>
+        <label class="form-item">
+          <span class="form-label">音频采样率</span>
+          <select id="sel-sample-rate">
+            <option value="">保持源采样率</option>
+            <option value="22050">22050 Hz</option>
+            <option value="32000">32000 Hz</option>
+            <option value="44100">44100 Hz</option>
+            <option value="48000">48000 Hz</option>
+            <option value="96000">96000 Hz</option>
+          </select>
+        </label>
+        <label class="form-item">
+          <span class="form-label">MP3 标签版本</span>
+          <select id="sel-id3-version">
+            <option value="3">ID3v2.3（兼容模式）</option>
+            <option value="4">ID3v2.4</option>
+          </select>
+        </label>
+        <label class="check-line"><input id="chk-preserve-metadata" type="checkbox" checked />保留文字标签（目标格式支持的字段）</label>
+        <label class="check-line"><input id="chk-preserve-cover" type="checkbox" checked />保留内嵌封面（MP3 / M4A / FLAC）</label>
       </div>
-      <p class="modal-tip">以上参数留空则不会传给 ffmpeg，由其使用默认值。</p>
+      <p class="modal-tip">未指定的参数使用默认值。像素格式须由所选编码器支持；Profile / Level 仅用于 libx264。降低 Level 不会自动缩小画面或降低帧率。封面与文字标签分别保留；跨格式不能保证所有自定义字段一一对应。</p>
       <div class="modal-footer">
         <button id="btn-advanced-ok" class="btn btn-primary" type="button">完成</button>
       </div>

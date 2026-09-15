@@ -283,3 +283,160 @@ test('截取保留毫秒时间，跨分钟进位和小于 1 秒的区间正确',
   const html = fs.readFileSync(path.join(repo, 'html/clip.html'), 'utf8');
   for (const id of ['slider-start', 'slider-end']) assert.match(html, new RegExp(`id="${id}"[^>]*step="0.001"`));
 });
+
+// 以下覆盖实际输出文件，而不仅检查参数字符串。
+test('老设备预设：10-bit/60fps/6 声道输入转为 Main 3.1/8-bit/最高30fps/AAC双声道', () => {
+  const input = path.join(temp, 'legacy-source.mkv');
+  execute(['-n', '-f', 'lavfi', '-i', 'testsrc2=s=320x240:r=60:d=1',
+    '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=5.1', '-t', '1',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p10le', '-profile:v', 'high10', '-c:a', 'flac', input]);
+  for (const preset of ['ipod4-540', 'ipod4-720']) {
+    const out = path.join(temp, `${preset}.mp4`);
+    execute(api.buildArgs({ devicePreset: preset, vcodec: 'copy', pixFmt: 'yuv420p10le' }, input, out));
+    const ss = probe(out).streams;
+    const v = ss.find((s) => s.codec_type === 'video'), a = ss.find((s) => s.codec_type === 'audio');
+    assert.equal(v.profile, 'Main'); assert.equal(v.level, 31); assert.equal(v.pix_fmt, 'yuv420p');
+    assert.ok(v.width <= (preset === 'ipod4-540' ? 960 : 1280));
+    assert.ok(v.height <= (preset === 'ipod4-540' ? 540 : 720));
+    assert.ok(Math.abs(v.width / v.height - 4 / 3) < 0.01, '不得把 4:3 拉伸成 16:9');
+    assert.equal(v.sample_aspect_ratio, '1:1');
+    const [n, d] = v.avg_frame_rate.split('/').map(Number); assert.ok(n / d <= 30.001);
+    assert.equal(a.codec_name, 'aac'); assert.equal(a.profile, 'LC'); assert.equal(a.channels, 2);
+    assert.equal(a.sample_rate, '48000');
+    const bytes = fs.readFileSync(out); assert.ok(bytes.indexOf('moov') < bytes.indexOf('mdat'));
+  }
+});
+
+test('老设备预设保留 23.976 fps；自定义可明确指定 8-bit、Profile 和固定帧率', () => {
+  const input = path.join(temp, 'film.mkv');
+  execute(['-n', '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=24000/1001:d=1',
+    '-f', 'lavfi', '-i', 'sine=d=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p10le', '-c:a', 'aac', input]);
+  for (const [name, job, expected] of [
+    ['film-preset', { devicePreset: 'ipod4-540' }, '24000/1001'],
+    ['film-custom', { format: 'mp4', vcodec: 'libx264', acodec: 'aac', pixFmt: 'yuv420p',
+      h264Profile: 'baseline', h264Level: '3.1', fps: '25', scale: { w: 320, h: 180 } }, '25/1'],
+  ]) {
+    const out = path.join(temp, `${name}.mp4`); execute(api.buildArgs(job, input, out));
+    const v = probe(out).streams.find((s) => s.codec_type === 'video');
+    assert.equal(v.pix_fmt, 'yuv420p'); assert.equal(v.avg_frame_rate, expected);
+  }
+});
+
+test('拦截复制流与转换参数的冲突、无效预设和不兼容 Profile/位深', () => {
+  for (const opts of [
+    { vcodec: 'copy', pixFmt: 'yuv420p' },
+    { vcodec: 'copy', scale: { w: 960, h: 540 } },
+    { vcodec: 'libx265', h264Profile: 'main' },
+    { vcodec: 'libx264', h264Profile: 'main', pixFmt: 'yuv420p10le' },
+    { vcodec: 'libx264', h264Level: 'invalid' },
+    { acodec: 'copy', channels: 2 },
+    { acodec: 'aac', sampleRate: 'bad' },
+    { devicePreset: 'unknown' },
+  ]) assert.throws(() => api.buildArgs({ format: 'mp4', ...opts }, dual, 'unused.mp4'));
+});
+
+async function makeTaggedFlac() {
+  const image = path.join(temp, 'cover.png'), file = path.join(temp, 'tagged.flac');
+  if (fs.existsSync(file)) return { image, file, info: await api.probeFile(file) };
+  execute(['-n', '-f', 'lavfi', '-i', 'color=c=blue:s=64x64', '-frames:v', '1', image]);
+  execute(['-n', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-i', image,
+    '-map', '0:a', '-map', '1:v', '-c:a', 'flac', '-c:v', 'copy', '-disposition:v', 'attached_pic',
+    '-metadata', 'title=测试曲名', '-metadata', 'artist=初音ミク', '-metadata', 'album=测试专辑',
+    '-metadata', 'album_artist=专辑艺术家', '-metadata', 'composer=作曲者テスト',
+    '-metadata', 'track=2/12', '-metadata', 'disc=1/2', '-metadata', 'date=2026',
+    '-metadata', 'genre=Electronic', '-metadata', 'comment=中文与日本語',
+    '-metadata:s:v', 'comment=Cover (front)', file]);
+  return { image, file, info: await api.probeFile(file) };
+}
+function lowerTags(file) {
+  return Object.fromEntries(Object.entries(probe(file).format.tags || {}).map(([k, v]) => [k.toLowerCase(), v]));
+}
+
+test('FLAC 转 MP3/M4A/FLAC 保留真实 PNG 封面、作曲者及中日文常用标签', async () => {
+  const { image, file, info } = await makeTaggedFlac();
+  assert.equal(info.hasVideo, false); assert.equal(info.covers.length, 1);
+  for (const format of ['mp3', 'm4a', 'flac']) {
+    const out = path.join(temp, `tagged-converted.${format}`);
+    execute(api.buildArgs({ format, vcodec: 'none', acodec: 'auto' }, file, out, info));
+    const tags = lowerTags(out);
+    for (const [key, value] of Object.entries({ title: '测试曲名', artist: '初音ミク', album: '测试专辑',
+      album_artist: '专辑艺术家', composer: '作曲者テスト', track: '2/12', disc: '1/2', date: '2026', genre: 'Electronic' })) {
+      assert.equal(tags[key], value, `${format}: ${key}`);
+    }
+    const cover = probe(out).streams.find((s) => s.disposition?.attached_pic);
+    assert.ok(cover, `${format} 必须保留封面`); assert.equal(cover.codec_name, 'png');
+    const extracted = path.join(temp, `extracted-${format}.png`);
+    execute(['-n', '-i', out, '-map', '0:v:0', '-c', 'copy', '-frames:v', '1', extracted]);
+    assert.ok(fs.readFileSync(image).equals(fs.readFileSync(extracted)), 'PNG 封面应逐字节保留');
+    if (format === 'mp3') assert.equal(fs.readFileSync(out)[3], 3, '默认写入 ID3v2.3');
+  }
+});
+
+test('MP3 可选 ID3v2.4；关闭封面或标签分别生效；无封面音频正常转换', async () => {
+  const { file, info } = await makeTaggedFlac();
+  for (const [name, opts] of [
+    ['id3v24', { id3Version: '4' }], ['no-cover', { preserveCover: false }],
+    ['no-tags', { preserveMetadata: false }],
+  ]) {
+    const out = path.join(temp, `${name}.mp3`);
+    execute(api.buildArgs({ format: 'mp3', vcodec: 'none', acodec: 'auto', ...opts }, file, out, info));
+    assert.equal(probe(out).streams.some((s) => s.disposition?.attached_pic), name !== 'no-cover');
+    assert.equal(lowerTags(out).composer, name === 'no-tags' ? undefined : '作曲者テスト');
+    if (name === 'id3v24') assert.equal(fs.readFileSync(out)[3], 4);
+  }
+  const out = path.join(temp, 'plain-audio.mp3');
+  execute(api.buildArgs({ format: 'mp3', vcodec: 'none' }, audio, out, audioProbe));
+  assert.deepEqual(probe(out).streams.map((s) => s.codec_type), ['audio']);
+});
+
+test('真实任务使用封面探测结果；WAV 缺少封面实现时给出明确提示', async () => {
+  const { file } = await makeTaggedFlac();
+  for (const format of ['mp3', 'wav']) {
+    const events = [];
+    const result = await api.runJob({ isDestroyed: () => false, send: (_, e) => events.push(e) },
+      { inputs: [file], outputDir: temp, format, vcodec: 'none' });
+    assert.equal(result.done, 1, JSON.stringify(events));
+    assert.equal(events.some((e) => e.type === 'file-warning'), format === 'wav');
+    const out = events.find((e) => e.type === 'file-done').output;
+    assert.equal(probe(out).streams.some((s) => s.disposition?.attached_pic), format === 'mp3');
+  }
+});
+
+test('设备预设通过任务入口正确生成 MP4；无音轨视频也能输出', async () => {
+  for (const input of [dual, silent]) {
+    const events = [];
+    const result = await api.runJob({ isDestroyed: () => false, send: (_, e) => events.push(e) },
+      { inputs: [input], outputDir: temp, format: 'wav', devicePreset: 'ipod4-540' });
+    assert.equal(result.done, 1, JSON.stringify(events));
+    const out = events.find((e) => e.type === 'file-done').output;
+    assert.equal(path.extname(out), '.mp4');
+    assert.equal(audios(out).length, input === dual ? 1 : 0);
+  }
+});
+
+test('30 秒试转确实限制输出时长，不覆盖或截短原文件', async () => {
+  const input = path.join(temp, 'long.wav'), out = path.join(temp, 'sample.mp3');
+  execute(['-n', '-f', 'lavfi', '-i', 'sine=duration=35', input]);
+  const original = fs.readFileSync(input);
+  execute(api.buildArgs({ format: 'mp3', vcodec: 'none', sampleOnly: true }, input, out));
+  const duration = Number(probe(out).format.duration);
+  assert.ok(duration >= 30 && duration < 30.2, `试转时长：${duration}`);
+  assert.ok(original.equals(fs.readFileSync(input)));
+});
+
+test('多个封面保留类型，JPEG 原样复制，WebP 封面转换为兼容图片', async () => {
+  const { image, file } = await makeTaggedFlac();
+  const jpeg = path.join(temp, 'back.jpg'), webp = path.join(temp, 'webp.webp');
+  execute(['-n', '-i', image, '-frames:v', '1', jpeg]);
+  execute(['-n', '-i', image, '-frames:v', '1', webp]);
+  const input = path.join(temp, 'multi-cover.mp3');
+  execute(['-n', '-i', file, '-i', jpeg, '-i', webp, '-map', '0:a', '-map', '0:v', '-map', '1:v', '-map', '2:v',
+    '-c:a', 'libmp3lame', '-c:v', 'copy', '-disposition:v', 'attached_pic',
+    '-metadata:s:v:1', 'comment=Cover (back)', '-metadata:s:v:2', 'comment=Other', input]);
+  const info = await api.probeFile(input), out = path.join(temp, 'multi-cover-output.mp3');
+  assert.equal(info.covers.length, 3);
+  execute(api.buildArgs({ format: 'mp3', vcodec: 'none' }, input, out, info));
+  const covers = probe(out).streams.filter((s) => s.disposition?.attached_pic);
+  assert.deepEqual(covers.map((s) => s.codec_name), ['png', 'mjpeg', 'mjpeg']);
+  assert.equal(covers[1].tags.comment, 'Cover (back)');
+});

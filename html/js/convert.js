@@ -85,10 +85,24 @@
     addFiles: $('btn-add-files'),
     clearFiles: $('btn-clear-files'),
     fileList: $('file-list'),
+    devicePreset: $('sel-device-preset'),
+    presetTip: $('preset-tip'),
+    sampleOnly: $('chk-sample-only'),
+    pixFmt: $('sel-pix-fmt'),
+    h264Profile: $('sel-h264-profile'),
+    h264Level: $('sel-h264-level'),
+    fps: $('sel-fps'),
+    channels: $('sel-channels'),
+    sampleRate: $('sel-sample-rate'),
+    id3Version: $('sel-id3-version'),
+    preserveMetadata: $('chk-preserve-metadata'),
+    preserveCover: $('chk-preserve-cover'),
     format: $('sel-format'),
     vcodec: $('sel-vcodec'),
     acodec: $('sel-acodec'),
     audioTrack: $('input-audio-track'),
+    audioTrackLabel: $('audio-track-label'),
+    fpsLabel: $('fps-label'),
     itemAudioTrack: $('item-audio-track'),
     itemAcodec: $('item-acodec'),
     hwaccel: $('sel-hwaccel'),
@@ -254,6 +268,9 @@
 
     els.capsLoading.classList.add('hidden');
     els.body.classList.remove('hidden');
+    // 预设不能静默退回不存在的编码器。
+    const legacyAvailable = muxerNames.has('mp4') && videoEnc.has('libx264') && audioEnc.has('aac');
+    for (const option of els.devicePreset.options) if (option.value) option.disabled = !legacyAvailable;
     onFormatChange();
     renderFileList();
   }
@@ -272,8 +289,44 @@
 
   function onVcodecChange() {
     const v = els.vcodec.value;
-    const showQuality = !['auto', 'copy', 'none'].includes(v) && !AUDIO_ONLY.has(els.format.value);
+    const showQuality = !els.devicePreset.value && !['auto', 'copy', 'none'].includes(v) && !AUDIO_ONLY.has(els.format.value);
     els.itemQuality.classList.toggle('hidden', !showQuality);
+    const video = !AUDIO_ONLY.has(els.format.value) && v !== 'none';
+    for (const key of ['vbitrate', 'vrateMode', 'scale', 'pixFmt', 'h264Profile', 'h264Level', 'fps']) {
+      els[key].closest('label').classList.toggle('hidden', !video);
+    }
+    const audio = !VIDEO_ONLY.has(els.format.value);
+    for (const key of ['abitrate', 'channels', 'sampleRate']) {
+      els[key].closest('label').classList.toggle('hidden', !audio);
+    }
+    els.id3Version.closest('label').classList.toggle('hidden', els.format.value !== 'mp3');
+
+  }
+
+  // 切换回自定义时恢复原设置，避免把预设参数误用于纯音频任务。
+  const presetFields = ['format', 'vcodec', 'acodec', 'hwaccel', 'pixFmt', 'h264Profile',
+    'h264Level', 'fps', 'channels', 'sampleRate', 'vbitrate', 'vrateMode', 'abitrate', 'scale'];
+  let customValues = null;
+  function onPresetChange() {
+    const preset = els.devicePreset.value;
+    if (preset) {
+      if (!customValues) customValues = Object.fromEntries(presetFields.map((key) => [key, els[key].value]));
+      const values = { format: 'mp4', vcodec: 'libx264', acodec: 'aac', hwaccel: '',
+        pixFmt: 'yuv420p', h264Profile: 'main', h264Level: '3.1', fps: '', channels: '2',
+        sampleRate: '48000', vbitrate: '2000', vrateMode: 'vbr', abitrate: '128',
+        scale: preset === 'ipod4-720' ? '1280x720' : '960x540' };
+      presetFields.forEach((key) => { els[key].value = values[key]; els[key].disabled = true; });
+    } else {
+      presetFields.forEach((key) => {
+        if (customValues) els[key].value = customValues[key];
+        els[key].disabled = false;
+      });
+      customValues = null;
+    }
+    els.presetTip.classList.toggle('hidden', !preset);
+    els.audioTrackLabel.textContent = preset ? '音轨序号（留空选择第 1 轨）' : '音轨序号（留空保留全部）';
+    els.fpsLabel.textContent = preset ? '输出帧率（最高 30 fps，保留较低帧率）' : '输出帧率（固定帧率）';
+    onFormatChange();
   }
 
   // ---------- 转换流程 ----------
@@ -301,8 +354,27 @@
       els.audioTrack.reportValidity();
       return;
     }
-    const scaleVal = parseScale(els.scale.value);
+    const scaleVal = AUDIO_ONLY.has(els.format.value) || els.vcodec.value === 'none' ? null : parseScale(els.scale.value);
+    if (scaleVal === 'invalid') {
+      els.advancedModal.classList.remove('hidden');
+      els.scale.focus();
+      log('分辨率格式不正确，请使用 960x540 或 50%');
+      return;
+    }
+    const video = !AUDIO_ONLY.has(els.format.value) && els.vcodec.value !== 'none';
+    const audio = !VIDEO_ONLY.has(els.format.value) && els.acodec.value !== 'none';
     const job = {
+      devicePreset: els.devicePreset.value,
+      sampleOnly: els.sampleOnly.checked,
+      pixFmt: video ? els.pixFmt.value : '',
+      h264Profile: video ? els.h264Profile.value : '',
+      h264Level: video ? els.h264Level.value : '',
+      fps: video ? els.fps.value : '',
+      channels: audio ? els.channels.value : '',
+      sampleRate: audio ? els.sampleRate.value : '',
+      id3Version: els.id3Version.value,
+      preserveMetadata: els.preserveMetadata.checked,
+      preserveCover: els.preserveCover.checked,
       inputs: state.files.slice(),
       outputDir: state.outputDir,
       format: els.format.value,
@@ -316,8 +388,8 @@
       vbitrate: Math.floor(Number(els.vbitrate.value)) || 0,
       vrateMode: els.vrateMode.value,
       abitrate: Math.floor(Number(els.abitrate.value)) || 0,
-      // 分辨率：非法输入按未填写处理（不传入）
-      scale: scaleVal === 'invalid' ? null : scaleVal,
+      // 分辨率：已在提交前校验
+      scale: scaleVal,
     };
 
     setRunning(true);
@@ -339,6 +411,8 @@
       } else if (evt.type === 'file-done') {
         setFileStatus(evt.index, '完成', 'done');
         log(`✔ ${baseName(evt.input)} → ${evt.output}`);
+      } else if (evt.type === 'file-warning') {
+        log(`⚠ ${baseName(evt.input)}：${evt.warning}`);
       } else if (evt.type === 'file-error') {
         setFileStatus(evt.index, '失败', 'error');
         log(`✘ ${baseName(evt.input)}：${evt.error}`);
@@ -373,7 +447,7 @@
   els.advancedModal.addEventListener('click', (e) => {
     if (e.target === els.advancedModal) closeAdvanced();
   });
-  // 分辨率输入即时校验：无法识别的输入标红提示（不会传给 ffmpeg）
+  // 分辨率输入即时校验：无法识别的输入标红，提交时阻止执行
   els.scale.addEventListener('input', () => {
     els.scale.classList.toggle('invalid', parseScale(els.scale.value) === 'invalid');
   });
@@ -392,6 +466,7 @@
       els.outdir.value = dir;
     }
   });
+  els.devicePreset.addEventListener('change', onPresetChange);
   els.format.addEventListener('change', onFormatChange);
   els.vcodec.addEventListener('change', onVcodecChange);
   els.start.addEventListener('click', startConvert);

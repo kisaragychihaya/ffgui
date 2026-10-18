@@ -84,6 +84,11 @@ npm run make       # 生成安装包（Windows: NSIS / macOS: zip / Linux: deb�
 - 光盘抓取由 Rust 侧车调用 freemkv-engine 完成读盘与无损封装，FFmpeg 负责后续转码
 - 渲染进程通过 preload 的 contextBridge 访问受限 IPC API（contextIsolation 开启）
 
+## 参考引用
+
+- [freemkv](https://github.com/freemkv/freemkv) — 光盘抓取所用的 freemkv-engine 上游项目（Rust 侧车基于它完成读盘与无损 MKV 封装）
+- [FFmpeg](https://git.ffmpeg.org/ffmpeg.git) — 本项目内置并调用的音视频处理引擎
+
 ## 许可证
 
 LGPL-3.0-or-later

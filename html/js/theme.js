@@ -13,11 +13,7 @@
 
   // ---------- 主题切换按钮（各页面共用，由本脚本注入，样式见 style.css） ----------
   const ORDER = ['system', 'light', 'dark']; // 点击循环顺序
-  const TITLES = {
-    system: '主题：跟随系统（点击切换）',
-    light: '主题：浅色（点击切换）',
-    dark: '主题：深色（点击切换）',
-  };
+  const TITLE_KEYS = { system: 'theme.tipSystem', light: 'theme.tipLight', dark: 'theme.tipDark' };
   // 三个 SVG 图标按 data-mode 显隐（CSS 控制）
   const ICONS = {
     system: '<svg class="icon-theme-system" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/><path d="M12 16v4"/></svg>',
@@ -28,7 +24,7 @@
 
   function render(btn) {
     btn.dataset.mode = current;
-    btn.title = TITLES[current];
+    btn.title = window.i18n ? window.i18n.t(TITLE_KEYS[current]) : '';
   }
 
   function initToggle() {
@@ -47,6 +43,8 @@
     window.ffgui.getTheme().then((theme) => { current = theme; render(btn); });
     // 其他页面/窗口触发的切换广播：同步图标与提示
     window.ffgui.onThemeChanged((theme) => { current = theme; render(btn); });
+    // 界面语言切换后提示文案跟着变
+    if (window.i18n) window.i18n.onChange(() => render(btn));
   }
 
   if (document.readyState === 'loading') {

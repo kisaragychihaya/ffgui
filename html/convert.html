@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-i18n-title="convert.title">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy"
@@ -11,115 +11,117 @@
 <body>
   <main class="view convert-view">
     <header class="feature-header">
-      <button id="btn-back" class="btn-back" type="button">← 返回首页</button>
-      <h2>音视频转码</h2>
+      <button id="btn-back" class="btn-back" type="button" data-i18n="common.backHome">← 返回首页</button>
+      <h2 data-i18n="convert.heading">音视频转码</h2>
     </header>
 
     <!-- 能力加载中 -->
     <section id="caps-loading" class="feature-placeholder">
-      <p>正在检测 ffmpeg 能力（硬件加速 / 编码器 / 封装格式）…</p>
+      <p data-i18n="convert.capsLoading">正在检测 ffmpeg 能力（硬件加速 / 编码器 / 封装格式）…</p>
     </section>
 
     <div id="convert-body" class="hidden">
       <!-- 文件列表（支持拖拽添加） -->
       <section class="panel" id="file-panel">
         <div class="panel-header">
-          <h3>源文件</h3>
+          <h3 data-i18n="convert.secSource">源文件</h3>
           <div class="panel-actions">
-            <button id="btn-add-files" class="btn" type="button">添加文件</button>
-            <button id="btn-clear-files" class="btn btn-plain" type="button">清空</button>
+            <button id="btn-add-files" class="btn" type="button" data-i18n="convert.btnAddFiles">添加文件</button>
+            <button id="btn-clear-files" class="btn btn-plain" type="button" data-i18n="convert.btnClear">清空</button>
           </div>
         </div>
         <ul id="file-list" class="file-list">
-          <li class="file-list-empty">尚未添加文件，点击「添加文件」或将音视频文件拖拽到此处</li>
+          <li class="file-list-empty" data-i18n="convert.fileEmpty">尚未添加文件，点击「添加文件」或将音视频文件拖拽到此处</li>
         </ul>
       </section>
 
       <!-- 转换参数 -->
       <section class="panel">
         <div class="panel-header">
-          <h3>输出设置</h3>
-          <button id="btn-advanced" class="btn" type="button">高级参数…</button>
+          <h3 data-i18n="convert.secOutput">输出设置</h3>
+          <button id="btn-advanced" class="btn" type="button" data-i18n="convert.btnAdvanced">高级参数…</button>
         </div>
         <label class="form-item">
-          <span class="form-label">设备预设</span>
+          <span class="form-label" data-i18n="convert.labelPreset">设备预设</span>
           <select id="sel-device-preset">
-            <option value="">自定义</option>
-            <optgroup label="在线平台">
-              <option value="bili-1080p">B站投稿 · 1080P（最高 60 fps）</option>
-              <option value="bili-720p">B站投稿 · 720P</option>
-              <option value="douyin-1080p">抖音/快手 · 1080P（最高 60 fps）</option>
-              <option value="wechat-1080p">微信视频号 · 1080P</option>
-              <option value="youtube-1080p">YouTube · 1080P（最高 60 fps）</option>
+            <option value="" data-i18n="convert.presetCustom">自定义</option>
+            <optgroup label="在线平台" data-i18n-attr="label:convert.groupOnline">
+              <option value="bili-1080p" data-i18n="convert.presetBili1080">B站投稿 · 1080P（最高 60 fps）</option>
+              <option value="bili-720p" data-i18n="convert.presetBili720">B站投稿 · 720P</option>
+              <option value="douyin-1080p" data-i18n="convert.presetDouyin1080">抖音/快手 · 1080P（最高 60 fps）</option>
+              <option value="wechat-1080p" data-i18n="convert.presetWechat1080">微信视频号 · 1080P</option>
+              <option value="youtube-1080p" data-i18n="convert.presetYoutube1080">YouTube · 1080P（最高 60 fps）</option>
             </optgroup>
-            <optgroup label="老设备">
-              <option value="ipod4-540">iPod touch 4 / iOS 6 · 最高 960×540</option>
-              <option value="ipod4-720">iPod touch 4 / iOS 6 · 最高 1280×720</option>
-              <option value="iphone4s">iPhone 4S / iOS 6 · 1080P</option>
-              <option value="psp">PSP · 480×272</option>
-              <option value="android-legacy">老款安卓 2.x · 800×480</option>
+            <optgroup label="老设备" data-i18n-attr="label:convert.groupLegacy">
+              <option value="ipod4-540" data-i18n="convert.presetIpod540">iPod touch 4 / iOS 6 · 最高 960×540</option>
+              <option value="ipod4-720" data-i18n="convert.presetIpod720">iPod touch 4 / iOS 6 · 最高 1280×720</option>
+              <option value="iphone4s" data-i18n="convert.presetIphone4s">iPhone 4S / iOS 6 · 1080P</option>
+              <option value="psp" data-i18n="convert.presetPsp">PSP · 480×272</option>
+              <option value="android-legacy" data-i18n="convert.presetAndroidLegacy">老款安卓 2.x · 800×480</option>
             </optgroup>
-            <optgroup label="通用">
-              <option value="web-safe">最大兼容 · 720p Baseline</option>
-              <option value="tv-4k">4K 电视/盒子 · 2160p</option>
+            <optgroup label="通用" data-i18n-attr="label:convert.groupGeneral">
+              <option value="web-safe" data-i18n="convert.presetWebSafe">最大兼容 · 720p Baseline</option>
+              <option value="tv-4k" data-i18n="convert.presetTv4k">4K 电视/盒子 · 2160p</option>
             </optgroup>
           </select>
         </label>
-        <p id="preset-tip" class="caps-info hidden">设备预设会锁定输出参数（格式 / 编码器 / 帧率 / 分辨率 / 码率），选择具体预设后此处显示其规格说明。</p>
+        <p id="preset-tip" class="caps-info hidden" data-i18n="convert.presetTipDefault">设备预设会锁定输出参数（格式 / 编码器 / 帧率 / 分辨率 / 码率），选择具体预设后此处显示其规格说明。</p>
         <div class="form-grid settings-grid">
           <label class="form-item">
-            <span class="form-label">输出格式</span>
+            <span class="form-label" data-i18n="convert.labelFormat">输出格式</span>
             <select id="sel-format"></select>
           </label>
           <label class="form-item" id="item-quality">
-            <span class="form-label">质量</span>
+            <span class="form-label" data-i18n="convert.labelQuality">质量</span>
             <select id="sel-quality">
-              <option value="high">高质量</option>
-              <option value="medium" selected>标准</option>
-              <option value="low">小体积</option>
+              <option value="high" data-i18n="convert.qualityHigh">高质量</option>
+              <option value="medium" selected data-i18n="convert.qualityMedium">标准</option>
+              <option value="low" data-i18n="convert.qualityLow">小体积</option>
             </select>
           </label>
           <label class="form-item" id="item-acodec">
-            <span class="form-label">音频编码</span>
+            <span class="form-label" data-i18n="convert.labelAcodec">音频编码</span>
             <select id="sel-acodec"></select>
           </label>
           <label class="form-item" id="item-audio-track">
-            <span class="form-label" id="audio-track-label">音轨序号（留空保留全部）</span>
-            <input id="input-audio-track" type="number" min="1" step="1" placeholder="如 2：只保留第 2 条音轨" />
+            <span class="form-label" id="audio-track-label" data-i18n="convert.labelAudioTrack">音轨序号（留空保留全部）</span>
+            <input id="input-audio-track" type="number" min="1" step="1"
+                   data-i18n-attr="placeholder:convert.phAudioTrack" placeholder="如 2：只保留第 2 条音轨" />
           </label>
           <label class="form-item">
-            <span class="form-label">硬件加速（解码）</span>
+            <span class="form-label" data-i18n="convert.labelHwaccel">硬件加速（解码）</span>
             <select id="sel-hwaccel"></select>
           </label>
           <label class="form-item" id="item-vcodec">
-            <span class="form-label">视频编码</span>
+            <span class="form-label" data-i18n="convert.labelVcodec">视频编码</span>
             <select id="sel-vcodec"></select>
           </label>
           <label class="form-item" id="item-hdr2sdr">
-            <span class="form-label">动态范围</span>
+            <span class="form-label" data-i18n="convert.labelHdr">动态范围</span>
             <span class="check-line">
               <input id="chk-hdr2sdr" type="checkbox" />
-              HDR 转 SDR（色调映射）
+              <span data-i18n="convert.checkHdr2sdr">HDR 转 SDR（色调映射）</span>
             </span>
           </label>
           <label class="form-item form-item-dir">
-            <span class="form-label">输出目录</span>
+            <span class="form-label" data-i18n="convert.labelOutdir">输出目录</span>
             <span class="dir-picker">
-              <input id="input-outdir" type="text" readonly placeholder="与源文件相同" />
-              <button id="btn-pick-dir" class="btn" type="button">浏览…</button>
+              <input id="input-outdir" type="text" readonly
+                     data-i18n-attr="placeholder:convert.phOutdir" placeholder="与源文件相同" />
+              <button id="btn-pick-dir" class="btn" type="button" data-i18n="convert.btnBrowse">浏览…</button>
             </span>
           </label>
         </div>
-        <label class="check-line"><input id="chk-sample-only" type="checkbox" />仅生成前 30 秒测试片段（先在目标设备验证）</label>
+        <label class="check-line"><input id="chk-sample-only" type="checkbox" /><span data-i18n="convert.checkSampleOnly">仅生成前 30 秒测试片段（先在目标设备验证）</span></label>
         <p id="caps-info" class="caps-info"></p>
-        <p class="caps-info">音轨序号按每个输入文件从 1 开始。MP3、FLAC、WAV、FLV 的多音轨输入需明确选轨；已有文件会自动避开，不覆盖。</p>
+        <p class="caps-info" data-i18n="convert.hintAudioTrackRule">音轨序号按每个输入文件从 1 开始。MP3、FLAC、WAV、FLV 的多音轨输入需明确选轨；已有文件会自动避开，不覆盖。</p>
       </section>
 
       <!-- 进度与操作 -->
       <section class="panel">
         <div class="convert-actions">
-          <button id="btn-start" class="btn btn-primary" type="button" disabled>开始转换</button>
-          <button id="btn-cancel" class="btn btn-danger hidden" type="button">取消</button>
+          <button id="btn-start" class="btn btn-primary" type="button" disabled data-i18n="convert.btnStart">开始转换</button>
+          <button id="btn-cancel" class="btn btn-danger hidden" type="button" data-i18n="common.cancel">取消</button>
           <span id="status-text" class="status-text"></span>
         </div>
         <div class="progress-track">
@@ -134,41 +136,45 @@
   <div id="advanced-modal" class="modal-overlay hidden">
     <div class="modal">
       <div class="modal-header">
-        <h3>高级参数</h3>
-        <button id="btn-advanced-close" class="modal-close" type="button" title="关闭">×</button>
+        <h3 data-i18n="convert.modalTitle">高级参数</h3>
+        <button id="btn-advanced-close" class="modal-close" type="button"
+                data-i18n-attr="title:convert.modalCloseTip" title="关闭">×</button>
       </div>
       <div class="form-grid">
         <label class="form-item">
-          <span class="form-label">视频码率（kbps，留空按质量档）</span>
-          <input id="input-vbitrate" type="number" min="0" step="100" placeholder="如 2000" />
+          <span class="form-label" data-i18n="convert.labelVbitrate">视频码率（kbps，留空按质量档）</span>
+          <input id="input-vbitrate" type="number" min="0" step="100"
+                 data-i18n-attr="placeholder:convert.phVbitrate" placeholder="如 2000" />
         </label>
         <label class="form-item">
-          <span class="form-label">视频码率模式</span>
+          <span class="form-label" data-i18n="convert.labelVrateMode">视频码率模式</span>
           <select id="sel-vratemode">
-            <option value="vbr">VBR（可变码率）</option>
-            <option value="cbr">CBR（固定码率）</option>
+            <option value="vbr" data-i18n="convert.vrateVbr">VBR（可变码率）</option>
+            <option value="cbr" data-i18n="convert.vrateCbr">CBR（固定码率）</option>
           </select>
         </label>
         <label class="form-item">
-          <span class="form-label">音频码率（kbps，留空默认）</span>
-          <input id="input-abitrate" type="number" min="0" step="32" placeholder="如 128" />
+          <span class="form-label" data-i18n="convert.labelAbitrate">音频码率（kbps，留空默认）</span>
+          <input id="input-abitrate" type="number" min="0" step="32"
+                 data-i18n-attr="placeholder:convert.phAbitrate" placeholder="如 128" />
         </label>
         <label class="form-item">
-          <span class="form-label">分辨率（宽x高 或百分比，默认 100%）</span>
-          <input id="input-scale" type="text" placeholder="如 1280x720 或 50%" />
+          <span class="form-label" data-i18n="convert.labelScale">分辨率（宽x高 或百分比，默认 100%）</span>
+          <input id="input-scale" type="text"
+                 data-i18n-attr="placeholder:convert.phScale" placeholder="如 1280x720 或 50%" />
         </label>
         <label class="form-item">
-          <span class="form-label">像素格式 / 位深</span>
+          <span class="form-label" data-i18n="convert.labelPixFmt">像素格式 / 位深</span>
           <select id="sel-pix-fmt">
-            <option value="">自动（可能沿用源位深）</option>
+            <option value="" data-i18n="convert.pixFmtAuto">自动（可能沿用源位深）</option>
             <option value="yuv420p">YUV 4:2:0 · 8-bit</option>
             <option value="yuv420p10le">YUV 4:2:0 · 10-bit</option>
           </select>
         </label>
         <label class="form-item">
-          <span class="form-label">H.264 Profile（仅 libx264）</span>
+          <span class="form-label" data-i18n="convert.labelH264Profile">H.264 Profile（仅 libx264）</span>
           <select id="sel-h264-profile">
-            <option value="">自动</option>
+            <option value="" data-i18n="convert.labelAuto">自动</option>
             <option value="baseline">Baseline</option>
             <option value="main">Main</option>
             <option value="high">High</option>
@@ -176,9 +182,9 @@
           </select>
         </label>
         <label class="form-item">
-          <span class="form-label">H.264 Level（仅 libx264）</span>
+          <span class="form-label" data-i18n="convert.labelH264Level">H.264 Level（仅 libx264）</span>
           <select id="sel-h264-level">
-            <option value="">自动</option>
+            <option value="" data-i18n="convert.labelAuto">自动</option>
             <option value="2.1">2.1</option>
             <option value="2.2">2.2</option>
             <option value="3.0">3.0</option>
@@ -192,8 +198,9 @@
           </select>
         </label>
         <label class="form-item">
-          <span class="form-label" id="fps-label">输出帧率（固定帧率，1–240）</span>
-          <input id="sel-fps" type="text" list="fps-options" inputmode="decimal" placeholder="自动 / 保持源帧率，可填数字" />
+          <span class="form-label" id="fps-label" data-i18n="convert.labelFps">输出帧率（固定帧率，1–240）</span>
+          <input id="sel-fps" type="text" list="fps-options" inputmode="decimal"
+                 data-i18n-attr="placeholder:convert.phFps" placeholder="自动 / 保持源帧率，可填数字" />
           <datalist id="fps-options">
             <option value="23.976"></option>
             <option value="24"></option>
@@ -206,18 +213,18 @@
           </datalist>
         </label>
         <label class="form-item">
-          <span class="form-label">输出声道</span>
+          <span class="form-label" data-i18n="convert.labelChannels">输出声道</span>
           <select id="sel-channels">
-            <option value="">保持源声道</option>
-            <option value="1">单声道</option>
-            <option value="2">双声道</option>
-            <option value="6">5.1（6 声道）</option>
+            <option value="" data-i18n="convert.channelsKeep">保持源声道</option>
+            <option value="1" data-i18n="convert.channelsMono">单声道</option>
+            <option value="2" data-i18n="convert.channelsStereo">双声道</option>
+            <option value="6" data-i18n="convert.channelsSurround">5.1（6 声道）</option>
           </select>
         </label>
         <label class="form-item">
-          <span class="form-label">音频采样率</span>
+          <span class="form-label" data-i18n="convert.labelSampleRate">音频采样率</span>
           <select id="sel-sample-rate">
-            <option value="">保持源采样率</option>
+            <option value="" data-i18n="convert.sampleRateKeep">保持源采样率</option>
             <option value="22050">22050 Hz</option>
             <option value="32000">32000 Hz</option>
             <option value="44100">44100 Hz</option>
@@ -226,22 +233,23 @@
           </select>
         </label>
         <label class="form-item">
-          <span class="form-label">MP3 标签版本</span>
+          <span class="form-label" data-i18n="convert.labelId3">MP3 标签版本</span>
           <select id="sel-id3-version">
-            <option value="3">ID3v2.3（兼容模式）</option>
+            <option value="3" data-i18n="convert.id3v23">ID3v2.3（兼容模式）</option>
             <option value="4">ID3v2.4</option>
           </select>
         </label>
-        <label class="check-line"><input id="chk-preserve-metadata" type="checkbox" checked />保留文字标签（目标格式支持的字段）</label>
-        <label class="check-line"><input id="chk-preserve-cover" type="checkbox" checked />保留内嵌封面（MP3 / M4A / FLAC）</label>
+        <label class="check-line"><input id="chk-preserve-metadata" type="checkbox" checked /><span data-i18n="convert.checkPreserveMetadata">保留文字标签（目标格式支持的字段）</span></label>
+        <label class="check-line"><input id="chk-preserve-cover" type="checkbox" checked /><span data-i18n="convert.checkPreserveCover">保留内嵌封面（MP3 / M4A / FLAC）</span></label>
       </div>
-      <p class="modal-tip">未指定的参数使用默认值。像素格式须由所选编码器支持；Profile / Level 仅用于 libx264。降低 Level 不会自动缩小画面或降低帧率。封面与文字标签分别保留；跨格式不能保证所有自定义字段一一对应。</p>
+      <p class="modal-tip" data-i18n="convert.modalTip">未指定的参数使用默认值。像素格式须由所选编码器支持；Profile / Level 仅用于 libx264。降低 Level 不会自动缩小画面或降低帧率。封面与文字标签分别保留；跨格式不能保证所有自定义字段一一对应。</p>
       <div class="modal-footer">
-        <button id="btn-advanced-ok" class="btn btn-primary" type="button">完成</button>
+        <button id="btn-advanced-ok" class="btn btn-primary" type="button" data-i18n="convert.btnAdvancedOk">完成</button>
       </div>
     </div>
   </div>
 
+  <script src="js/i18n.js"></script>
   <script src="js/theme.js"></script>
   <script src="js/convert.js"></script>
 </body>

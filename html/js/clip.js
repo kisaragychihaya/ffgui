@@ -2,6 +2,8 @@
 // 播放用原生 <video>；浏览器放不了的格式由主进程转一份低码率预览副本兜底，
 // 副本与原片时间轴 1:1 对齐，截取与截图始终作用于原文件
 (function () {
+  const t = window.i18n.t;
+
   // 与主进程文件选择对话框保持一致的媒体扩展名
   const MEDIA_EXTS = new Set(['mp4', 'mkv', 'avi', 'mov', 'flv', 'wmv', 'webm', 'ts', 'm4v',
     'mp3', 'aac', 'flac', 'wav', 'ogg', 'm4a', 'wma']);
@@ -181,8 +183,8 @@
 
   els.play.addEventListener('click', togglePlay);
   els.video.addEventListener('click', togglePlay);
-  els.video.addEventListener('play', () => { els.play.textContent = '暂停'; });
-  els.video.addEventListener('pause', () => { els.play.textContent = '播放'; });
+  els.video.addEventListener('play', () => { els.play.textContent = t('clip.btnPause'); });
+  els.video.addEventListener('pause', () => { els.play.textContent = t('clip.btnPlay'); });
   els.video.addEventListener('timeupdate', () => {
     els.timeCur.textContent = formatTime(els.video.currentTime);
     if (document.activeElement !== els.seekBar) els.seekBar.value = els.video.currentTime;
@@ -232,7 +234,7 @@
     if (ticket !== state.loading) return; // 期间又加载了别的文件
     const p = probes[0];
     if (!p || (!p.hasVideo && !p.hasAudio)) {
-      log(`✘ 无法识别的文件（无音视频流）：${baseName(filePath)}`);
+      log(t('clip.errNoStreams', { name: baseName(filePath) }));
       return;
     }
 
@@ -270,7 +272,7 @@
     if (!state.file || state.busy || !els.video.getAttribute('src')) return;
     if (state.playable) return; // 播放中途的异常不重复触发
     if (state.usingPreview) {
-      showOverlay('预览生成后仍无法播放该文件');
+      showOverlay(t('clip.overlayPreviewStillFailed'));
       return;
     }
     makePreview(state.loading);
@@ -279,13 +281,13 @@
   async function makePreview(ticket) {
     setBusy(true);
     els.progressBar.style.setProperty('--progress-width', '0%');
-    showOverlay('该格式浏览器无法直接播放，正在生成低画质预览…');
-    els.status.textContent = '正在生成预览…';
+    showOverlay(t('clip.overlayGeneratingPreview'));
+    els.status.textContent = t('clip.statusGeneratingPreview');
 
     const off = window.ffgui.onConvertEvent((evt) => {
       if (evt.type === 'progress') {
         els.progressBar.style.setProperty('--progress-width', `${evt.percent}%`);
-        els.status.textContent = `正在生成预览… ${evt.percent}%`
+        els.status.textContent = t('clip.statusPreviewProgress', { percent: evt.percent })
           + (evt.speed ? `  ${evt.speed}` : '');
       }
     });
@@ -302,15 +304,15 @@
         state.usingPreview = true;
         els.previewTag.classList.remove('hidden');
         els.progressBar.style.setProperty('--progress-width', '100%');
-        els.status.textContent = '预览已生成（低画质，不影响输出）';
+        els.status.textContent = t('clip.statusPreviewReady');
         els.video.src = window.ffgui.pathToFileUrl(res.output);
       } else {
-        showOverlay(res.cancelled ? '已取消预览生成' : '预览生成失败，该文件无法预览');
-        els.status.textContent = res.cancelled ? '已取消' : '预览生成失败';
+        showOverlay(res.cancelled ? t('clip.overlayPreviewCancelled') : t('clip.overlayPreviewError'));
+        els.status.textContent = res.cancelled ? t('clip.statusCancelled') : t('clip.statusPreviewFailed');
       }
     } catch (err) {
-      showOverlay('预览生成失败，该文件无法预览');
-      log(`✘ 预览生成失败：${String(err && err.message || err)}`);
+      showOverlay(t('clip.overlayPreviewError'));
+      log(t('clip.logPreviewError', { error: String(err && err.message || err) }));
     } finally {
       off();
       if (ticket === state.loading) setBusy(false);
@@ -320,18 +322,18 @@
   // ---------- 抓帧截图 ----------
   els.capture.addEventListener('click', async () => {
     if (!state.file || !state.probe.hasVideo) return;
-    const t = els.video.currentTime || 0;
+    const frameTime = els.video.currentTime || 0;
     const base = baseName(state.file).replace(/\.[^.]+$/, '');
-    const defaultName = `${base}_${formatTime(t).replace(/:/g, '')}.png`;
+    const defaultName = `${base}_${formatTime(frameTime).replace(/:/g, '')}.png`;
     try {
       const saved = await window.ffgui.captureFrame({
         input: state.file, // 始终从原文件抓帧，保证原分辨率
-        time: t,
+        time: frameTime,
         defaultName,
       });
-      if (saved) log(`✔ 已保存截图 → ${saved}`);
+      if (saved) log(t('clip.logFrameSaved', { path: saved }));
     } catch (err) {
-      log(`✘ 截图失败：${String(err && err.message || err)}`);
+      log(t('clip.logFrameError', { error: String(err && err.message || err) }));
     }
   });
 
@@ -341,7 +343,7 @@
     const start = parseTime(els.inputStart.value);
     const end = parseTime(els.inputEnd.value);
     if (start === null || end === null || end <= start) {
-      els.status.textContent = '起止时间无效（终点必须大于起点）';
+      els.status.textContent = t('clip.errRangeInvalid');
       return;
     }
 
@@ -351,12 +353,13 @@
     const off = window.ffgui.onConvertEvent((evt) => {
       if (evt.type === 'progress') {
         els.progressBar.style.setProperty('--progress-width', `${evt.percent}%`);
-        els.status.textContent = `截取中… ${evt.percent}%  ${formatTime(evt.time)}/${formatTime(evt.duration)}`
+        els.status.textContent = t('clip.statusClipping',
+          { percent: evt.percent, time: formatTime(evt.time), duration: formatTime(evt.duration) })
           + (evt.speed ? `  ${evt.speed}` : '');
       } else if (evt.type === 'file-done') {
-        log(`✔ 截取完成 → ${evt.output}`);
+        log(t('clip.logDone', { output: evt.output }));
       } else if (evt.type === 'file-error') {
-        log(`✘ 截取失败：${evt.error}`);
+        log(t('clip.logError', { error: evt.error }));
       }
     });
 
@@ -365,11 +368,11 @@
       const currentWidth = els.progressBar.style.getPropertyValue('--progress-width');
       els.progressBar.style.setProperty('--progress-width', result.done === result.total ? '100%' : currentWidth);
       els.status.textContent = result.cancelled
-        ? '已取消'
-        : (result.done === result.total ? '截取完成' : '截取失败，详见日志');
+        ? t('clip.statusCancelled')
+        : (result.done === result.total ? t('clip.statusDone') : t('clip.statusFailedSeeLog'));
     } catch (err) {
-      log(`✘ 截取失败：${String(err && err.message || err)}`);
-      els.status.textContent = '截取失败';
+      log(t('clip.logError', { error: String(err && err.message || err) }));
+      els.status.textContent = t('clip.statusFailed');
     } finally {
       off();
       setBusy(false);
@@ -403,7 +406,7 @@
   els.start.addEventListener('click', startClip);
   els.cancel.addEventListener('click', () => {
     window.ffgui.cancelConvert();
-    els.status.textContent = '正在取消…';
+    els.status.textContent = t('clip.statusCancelling');
   });
 
   // ---------- 拖拽加载文件 ----------
@@ -432,6 +435,11 @@
         return; // 只取第一个可用文件
       }
     }
-    log('✘ 未找到可用的音视频文件');
+    log(t('clip.errNoUsableFile'));
+  });
+
+  // 语言切换：重刷播放按钮标签（其余动态文案依赖任务状态，保持生成时语言）
+  window.i18n.onChange(() => {
+    els.play.textContent = els.video.paused ? t('clip.btnPlay') : t('clip.btnPause');
   });
 })();

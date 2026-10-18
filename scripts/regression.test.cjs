@@ -24,7 +24,10 @@ function load(overrides = {}) {
   const ctx = {
     require: (n) => n === 'electron'
       ? { app: { isPackaged: false, getAppPath: () => repo, getPath: () => temp } }
-      : n === 'child_process' ? childProcess : require(n),
+      : n === 'child_process' ? childProcess
+        // 主进程文案走 locales/<lng>.json；vm 沙箱里的相对 require 需按仓库根解析
+        : n === './i18n' ? require(path.join(repo, 'main', 'i18n.js'))
+          : require(n),
     process, console: quiet, module: { exports: {} },
   };
   vm.createContext(ctx);

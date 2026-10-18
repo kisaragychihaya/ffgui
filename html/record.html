@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-i18n-title="record.title">
 <head>
   <meta charset="UTF-8" />
   <!-- 媒体源放行 file:/blob:：预览画面走 srcObject，录制结果回放走 file: URL；
@@ -13,70 +13,71 @@
 <body>
   <main class="view record-view">
     <header class="feature-header">
-      <button id="btn-back" class="btn-back" type="button">← 返回首页</button>
-      <h2>屏幕录制</h2>
+      <button id="btn-back" class="btn-back" type="button" data-i18n="common.backHome">← 返回首页</button>
+      <h2 data-i18n="record.heading">屏幕录制</h2>
     </header>
 
     <!-- 来源与声音 -->
     <section class="panel">
       <div class="panel-header">
-        <h3>录制来源与声音</h3>
+        <h3 data-i18n="record.secSource">录制来源与声音</h3>
       </div>
       <div class="record-source-row">
-        <button id="btn-pick-source" class="btn" type="button">选择屏幕 / 窗口…</button>
-        <span id="source-name" class="record-source-name">未选择</span>
+        <button id="btn-pick-source" class="btn" type="button" data-i18n="record.btnPickSource">选择屏幕 / 窗口…</button>
+        <span id="source-name" class="record-source-name" data-i18n="record.sourceNone">未选择</span>
       </div>
       <div class="record-audio-row">
         <label class="check-line">
           <input id="chk-sys-audio" type="checkbox" />
-          录制系统声音（仅 Windows 支持；勾选后自动按当前来源重新采集）
+          <span data-i18n="record.chkSysAudio">录制系统声音（仅 Windows 支持；勾选后自动按当前来源重新采集）</span>
         </label>
         <label class="check-line">
           <input id="chk-mic" type="checkbox" />
-          录制麦克风
+          <span data-i18n="record.chkMic">录制麦克风</span>
         </label>
         <label class="form-item record-mic-device hidden" id="item-mic-device">
-          <span class="form-label">麦克风设备</span>
+          <span class="form-label" data-i18n="record.lblMicDevice">麦克风设备</span>
           <select id="sel-mic"></select>
         </label>
       </div>
       <div class="record-preview">
         <video id="preview" playsinline muted autoplay></video>
-        <div id="preview-empty" class="record-preview-empty">选择来源后在此预览画面（预览已静音，防回授）</div>
+        <div id="preview-empty" class="record-preview-empty" data-i18n="record.previewEmpty">选择来源后在此预览画面（预览已静音，防回授）</div>
       </div>
     </section>
 
     <!-- 录制参数 -->
     <section class="panel">
       <div class="panel-header">
-        <h3>录制参数</h3>
+        <h3 data-i18n="record.secParams">录制参数</h3>
       </div>
       <div class="form-grid settings-grid">
         <label class="form-item">
-          <span class="form-label">画质</span>
+          <span class="form-label" data-i18n="record.lblQuality">画质</span>
           <select id="sel-quality">
-            <option value="high">高（约 8 Mbps）</option>
-            <option value="medium" selected>标准（约 4 Mbps）</option>
-            <option value="low">小体积（约 2 Mbps）</option>
+            <option value="high" data-i18n="record.qualityHigh">高（约 8 Mbps）</option>
+            <option value="medium" selected data-i18n="record.qualityMedium">标准（约 4 Mbps）</option>
+            <option value="low" data-i18n="record.qualityLow">小体积（约 2 Mbps）</option>
           </select>
         </label>
         <label class="form-item form-item-dir">
-          <span class="form-label">输出文件（WebM，录制开始时确认保存位置）</span>
+          <span class="form-label" data-i18n="record.lblOutfile">输出文件（WebM，录制开始时确认保存位置）</span>
           <span class="dir-picker">
-            <input id="input-outfile" type="text" readonly placeholder="默认 视频/record_时间戳.webm" />
-            <button id="btn-pick-outfile" class="btn" type="button">浏览…</button>
+            <input id="input-outfile" type="text" readonly placeholder="默认 视频/record_时间戳.webm"
+                   data-i18n-attr="placeholder:record.phOutfile" />
+            <button id="btn-pick-outfile" class="btn" type="button" data-i18n="record.btnBrowse">浏览…</button>
           </span>
         </label>
       </div>
-      <p class="caps-info">输出为 WebM（VP9 + Opus），帧率跟随屏幕；需要 MP4 可在录制完成后一键转换（视频流无损复制）。</p>
+      <p class="caps-info" data-i18n="record.capsInfo">输出为 WebM（VP9 + Opus），帧率跟随屏幕；需要 MP4 可在录制完成后一键转换（视频流无损复制）。</p>
     </section>
 
     <!-- 操作与进度 -->
     <section class="panel">
       <div class="convert-actions">
-        <button id="btn-start" class="btn btn-primary" type="button" disabled>开始录制</button>
-        <button id="btn-cancel" class="btn btn-danger hidden" type="button">取消</button>
-        <button id="btn-remux" class="btn hidden" type="button">转为 MP4</button>
+        <button id="btn-start" class="btn btn-primary" type="button" disabled data-i18n="record.btnStart">开始录制</button>
+        <button id="btn-cancel" class="btn btn-danger hidden" type="button" data-i18n="common.cancel">取消</button>
+        <button id="btn-remux" class="btn hidden" type="button" data-i18n="record.btnRemux">转为 MP4</button>
         <span id="rec-dot" class="record-dot hidden"></span>
         <span id="rec-time" class="record-time hidden">0:00:00</span>
         <span id="status-text" class="status-text"></span>
@@ -92,14 +93,16 @@
   <div id="source-modal" class="modal-overlay hidden">
     <div class="modal record-source-modal">
       <div class="modal-header">
-        <h3>选择要录制的内容</h3>
-        <button id="btn-source-close" class="modal-close" type="button" title="关闭">×</button>
+        <h3 data-i18n="record.modalTitle">选择要录制的内容</h3>
+        <button id="btn-source-close" class="modal-close" type="button" title="关闭"
+                data-i18n-attr="title:record.btnClose">×</button>
       </div>
       <div id="source-grid" class="record-source-grid"></div>
-      <p class="modal-tip">系统声音仅 Windows 支持（回环采集，与所选画面无关）；勾选「录制系统声音」后若重新选择来源会自动带上音轨。</p>
+      <p class="modal-tip" data-i18n="record.modalTip">系统声音仅 Windows 支持（回环采集，与所选画面无关）；勾选「录制系统声音」后若重新选择来源会自动带上音轨。</p>
     </div>
   </div>
 
+  <script src="js/i18n.js"></script>
   <script src="js/theme.js"></script>
   <script src="js/record.js"></script>
 </body>

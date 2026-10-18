@@ -6,6 +6,7 @@ const {
   createDiscSidecar,
   DISC_SIDECAR_VERSION,
 } = require('./disc-sidecar');
+const { t } = require('./i18n');
 
 const SOURCE_KINDS = new Set(['iso', 'folder', 'drive']);
 const MODES = new Set(['copy', 'transcode']);
@@ -30,19 +31,19 @@ function invalid(field, message) {
 }
 
 function requiredString(value, field) {
-  if (typeof value !== 'string' || !value) throw invalid(field, `${field} 必须是非空字符串`);
+  if (typeof value !== 'string' || !value) throw invalid(field, t('main.disc.errRequired', { field }));
   return value;
 }
 
 function normalizeSource(source) {
-  if (!isPlainObject(source)) throw invalid('source', '光盘来源必须是对象');
-  if (!SOURCE_KINDS.has(source.kind)) throw invalid('source.kind', '不支持的光盘来源类型');
+  if (!isPlainObject(source)) throw invalid('source', t('main.disc.errSourceObject'));
+  if (!SOURCE_KINDS.has(source.kind)) throw invalid('source.kind', t('main.disc.errSourceKind'));
   return { kind: source.kind, path: requiredString(source.path, 'source.path') };
 }
 
 function normalizeTrackIds(value, field) {
   if (value === undefined || value === null) return null;
-  if (!Array.isArray(value)) throw invalid(field, `${field} 必须是字符串数组或 null`);
+  if (!Array.isArray(value)) throw invalid(field, t('main.disc.errTrackIds', { field }));
   const ids = [];
   for (const raw of value) {
     const id = requiredString(raw, field);
@@ -53,28 +54,28 @@ function normalizeTrackIds(value, field) {
 
 function normalizeFingerprint(value, titleId) {
   if (!isPlainObject(value)) {
-    throw invalid('titles.titleFingerprint', `标题 ${titleId} 缺少有效内容指纹`);
+    throw invalid('titles.titleFingerprint', t('main.disc.errFingerprintMissing', { titleId }));
   }
   const id = requiredString(value.id, 'titles.titleFingerprint.id');
   if (id !== titleId) {
-    throw invalid('titles.titleFingerprint.id', `标题 ${titleId} 的内容指纹与 titleId 不一致`);
+    throw invalid('titles.titleFingerprint.id', t('main.disc.errFingerprintMismatch', { titleId }));
   }
   const integer = (v, field) => {
-    if (!Number.isSafeInteger(v) || v < 0) throw invalid(field, '内容指纹中的整数无效');
+    if (!Number.isSafeInteger(v) || v < 0) throw invalid(field, t('main.disc.errFingerprintInteger'));
     return v;
   };
   const firstLba = value.firstLba === null ? null : integer(value.firstLba, 'titles.titleFingerprint.firstLba');
   const sectors = integer(value.sectors, 'titles.titleFingerprint.sectors');
   const sizeBytes = integer(value.sizeBytes, 'titles.titleFingerprint.sizeBytes');
   if (typeof value.durationSecs !== 'number' || !Number.isFinite(value.durationSecs) || value.durationSecs < 0) {
-    throw invalid('titles.titleFingerprint.durationSecs', '内容指纹中的时长无效');
+    throw invalid('titles.titleFingerprint.durationSecs', t('main.disc.errFingerprintDuration'));
   }
   return { id, firstLba, sectors, durationSecs: value.durationSecs, sizeBytes };
 }
 
 // 只构造协议允许的字段；来源 label 等界面字段不会进入侧车请求。
 function validateDiscJob(job) {
-  if (!isPlainObject(job)) throw invalid('job', '光盘任务必须是对象');
+  if (!isPlainObject(job)) throw invalid('job', t('main.disc.errJobObject'));
   const normalized = {
     id: requiredString(job.id, 'id'),
     source: normalizeSource(job.source),
@@ -87,28 +88,28 @@ function validateDiscJob(job) {
     audioCodec: job.audioCodec,
     titles: [],
   };
-  if (!MODES.has(job.mode)) throw invalid('mode', '输出方式必须是 copy 或 transcode');
-  if (!FORMATS.has(job.format)) throw invalid('format', '输出格式必须是 mkv 或 mp4');
-  if (!QUALITIES.has(job.quality)) throw invalid('quality', '不支持的质量档');
-  if (!AUDIO_CODECS.has(job.audioCodec)) throw invalid('audioCodec', '音频编码必须是 copy 或 aac');
+  if (!MODES.has(job.mode)) throw invalid('mode', t('main.disc.errMode'));
+  if (!FORMATS.has(job.format)) throw invalid('format', t('main.disc.errFormat'));
+  if (!QUALITIES.has(job.quality)) throw invalid('quality', t('main.disc.errQuality'));
+  if (!AUDIO_CODECS.has(job.audioCodec)) throw invalid('audioCodec', t('main.disc.errAudioCodec'));
   if (job.mode === 'copy' && (job.format !== 'mkv' || job.audioCodec !== 'copy')) {
-    throw invalid('mode', '无损模式仅支持 MKV 且音频必须直接复制');
+    throw invalid('mode', t('main.disc.errCopyMode'));
   }
   if (job.mode === 'transcode' && job.format === 'mp4' && job.audioCodec !== 'aac') {
-    throw invalid('audioCodec', 'MP4 转码仅支持 AAC 音频');
+    throw invalid('audioCodec', t('main.disc.errMp4Aac'));
   }
   if (!Array.isArray(job.titles) || job.titles.length === 0) {
-    throw invalid('titles', '至少选择一个标题');
+    throw invalid('titles', t('main.disc.errNoTitles'));
   }
   const titleIds = new Set();
   normalized.titles = job.titles.map((entry, index) => {
-    if (!isPlainObject(entry)) throw invalid(`titles.${index}`, '标题条目必须是对象');
+    if (!isPlainObject(entry)) throw invalid(`titles.${index}`, t('main.disc.errTitleObject'));
     const titleId = requiredString(entry.titleId, `titles.${index}.titleId`);
-    if (titleIds.has(titleId)) throw invalid(`titles.${index}.titleId`, `标题 ${titleId} 重复`);
+    if (titleIds.has(titleId)) throw invalid(`titles.${index}.titleId`, t('main.disc.errTitleDuplicate', { titleId }));
     titleIds.add(titleId);
     if (job.mode === 'transcode' && job.format === 'mp4'
       && (!Array.isArray(entry.subtitleTrackIds) || entry.subtitleTrackIds.length !== 0)) {
-      throw invalid(`titles.${index}.subtitleTrackIds`, `MP4 输出要求标题 ${titleId} 显式选择不保留字幕`);
+      throw invalid(`titles.${index}.subtitleTrackIds`, t('main.disc.errSubtitleExplicit', { titleId }));
     }
     return {
       titleId,
@@ -126,7 +127,8 @@ function resolveDiscSidecarPath(options = {}) {
   const platform = options.platform || process.platform;
   const executableName = platform === 'win32' ? 'ffgui-disc.exe' : 'ffgui-disc';
   const notFound = (candidates) => discError('FFGUI_DISC_SIDECAR_NOT_FOUND',
-    `未找到光盘抓取组件：${candidates.join('、')}`, { candidates });
+    t('main.disc.errSidecarMissing', { candidates: candidates.join(t('main.disc.listSeparator')) }),
+    { candidates });
 
   const override = env.FFGUI_DISC_SIDECAR;
   if (override) {
@@ -183,9 +185,10 @@ function allocateOutputPlans(job, fsImpl) {
   try {
     stat = fsImpl.statSync(job.outputDir);
   } catch (err) {
-    throw discError('FFGUI_OUTPUT_DIR', `输出目录不可用：${job.outputDir}`, { path: job.outputDir, cause: err.message });
+    throw discError('FFGUI_OUTPUT_DIR', t('main.disc.errOutputDirUnusable', { path: job.outputDir }),
+      { path: job.outputDir, cause: err.message });
   }
-  if (!stat.isDirectory()) throw discError('FFGUI_OUTPUT_DIR', `输出路径不是目录：${job.outputDir}`, { path: job.outputDir });
+  if (!stat.isDirectory()) throw discError('FFGUI_OUTPUT_DIR', t('main.disc.errOutputNotDir', { path: job.outputDir }), { path: job.outputDir });
 
   const outputDir = path.resolve(job.outputDir);
   const reserved = new Set([pathKey(job.source.path)]);
@@ -269,7 +272,7 @@ function createDiscService(options = {}) {
         level: 'warning',
         code: 'FFGUI_CLEANUP_FAILED',
         params: { path: file, reason: err && err.message ? err.message : String(err) },
-        message: `清理临时文件失败：${file}`,
+        message: t('main.disc.cleanupFailed', { path: file }),
       });
     }
   }
@@ -278,7 +281,7 @@ function createDiscService(options = {}) {
     const { run } = invokeSidecar('probe', { source: normalizeSource(source) });
     const result = await run;
     if (!isPlainObject(result) || !isPlainObject(result.disc)) {
-      throw discError('FFGUI_BAD_RESULT', '光盘探测结果缺少 disc 对象');
+      throw discError('FFGUI_BAD_RESULT', t('main.disc.errProbeShape'));
     }
     return result.disc;
   }
@@ -300,7 +303,7 @@ function createDiscService(options = {}) {
       throw err;
     }
     if (!isPlainObject(result) || !Array.isArray(result.drives)) {
-      throw discError('FFGUI_BAD_RESULT', '光驱枚举结果缺少 drives 数组');
+      throw discError('FFGUI_BAD_RESULT', t('main.disc.errDrivesShape'));
     }
     return unsupportedCode ? { drives: [], code: unsupportedCode } : { drives: result.drives };
   }
@@ -319,7 +322,7 @@ function createDiscService(options = {}) {
         level: 'warning',
         code: 'FFGUI_CANCEL_FAILED',
         params: { reason: err && err.message ? err.message : String(err) },
-        message: '取消请求发送失败，等待当前步骤结束',
+        message: t('main.disc.cancelFailed'),
       });
     }
     return true;
@@ -373,7 +376,7 @@ function createDiscService(options = {}) {
           } else if (event.type === 'log') {
             const logParams = isPlainObject(event.params) ? event.params : {};
             const message = typeof event.message === 'string' ? event.message
-              : (typeof logParams.message === 'string' ? logParams.message : String(event.code || '光盘抓取日志'));
+              : (typeof logParams.message === 'string' ? logParams.message : String(event.code || t('main.disc.logFallback')));
             emit(sender, {
               type: 'log',
               ...meta('rip', ripOutput),
@@ -389,7 +392,7 @@ function createDiscService(options = {}) {
         state.sidecar = null;
         if (!isPlainObject(ripResult) || ripResult.titleId !== title.titleId
           || typeof ripResult.output !== 'string' || pathKey(ripResult.output) !== pathKey(ripOutput)) {
-          throw discError('FFGUI_BAD_RESULT', `标题 ${title.titleId} 的抓取结果与请求不一致`, {
+          throw discError('FFGUI_BAD_RESULT', t('main.disc.errRipMismatch', { titleId: title.titleId }), {
             titleId: title.titleId,
             output: ripOutput,
           });
@@ -439,7 +442,7 @@ function createDiscService(options = {}) {
                 level: 'warning',
                 code: 'FFGUI_TRANSCODE_WARNING',
                 params: { message: event.warning || '' },
-                message: event.warning || '转码警告',
+                message: event.warning || t('main.disc.transcodeWarning'),
               });
             } else if (event.type === 'file-error') {
               conversionError = event.error || '';
@@ -456,8 +459,8 @@ function createDiscService(options = {}) {
           state.cancelRequested = true;
           break;
         }
-        throw discError('FFGUI_TRANSCODE_FAILED', `标题 ${title.titleId} 转码失败`, {
-          message: conversionError || 'FFmpeg 未完成输出',
+        throw discError('FFGUI_TRANSCODE_FAILED', t('main.disc.errTranscodeFailed', { titleId: title.titleId }), {
+          message: conversionError || t('main.disc.ffmpegIncomplete'),
         });
       } catch (err) {
         if (state.cancelRequested || (err && err.code === 'cancelled')) {
@@ -487,7 +490,7 @@ function createDiscService(options = {}) {
   }
 
   async function start(sender, job) {
-    if (activeJob) throw discError('FFGUI_DISC_BUSY', '已有光盘任务正在运行');
+    if (activeJob) throw discError('FFGUI_DISC_BUSY', t('main.disc.errBusy'));
     const normalized = validateDiscJob(job);
     const state = {
       id: normalized.id,
@@ -517,13 +520,13 @@ function registerDiscIpc() {
   const windowFor = (event) => BrowserWindow.fromWebContents(event.sender);
 
   ipcMain.handle('ffgui:disc-pick-source', async (event, kind) => {
-    if (kind !== 'iso' && kind !== 'folder') throw invalid('kind', '来源类型必须是 iso 或 folder');
+    if (kind !== 'iso' && kind !== 'folder') throw invalid('kind', t('main.disc.errPickKind'));
     const res = await dialog.showOpenDialog(windowFor(event), {
-      title: kind === 'iso' ? '选择光盘 ISO 镜像' : '选择已提取的光盘目录',
+      title: kind === 'iso' ? t('main.dialog.pickIsoImage') : t('main.dialog.pickDiscFolder'),
       properties: [kind === 'iso' ? 'openFile' : 'openDirectory'],
       filters: kind === 'iso' ? [
-        { name: '光盘镜像', extensions: ['iso'] },
-        { name: '所有文件', extensions: ['*'] },
+        { name: t('main.dialog.filterIsoImage'), extensions: ['iso'] },
+        { name: t('main.dialog.filterAllFiles'), extensions: ['*'] },
       ] : undefined,
     });
     return res.canceled || !res.filePaths[0] ? null : { kind, path: res.filePaths[0] };
@@ -531,11 +534,11 @@ function registerDiscIpc() {
 
   ipcMain.handle('ffgui:disc-pick-keydb', async (event) => {
     const res = await dialog.showOpenDialog(windowFor(event), {
-      title: '选择 KEYDB 密钥库',
+      title: t('main.dialog.pickKeydb'),
       properties: ['openFile'],
       filters: [
-        { name: 'KEYDB 密钥库', extensions: ['cfg'] },
-        { name: '所有文件', extensions: ['*'] },
+        { name: t('main.dialog.filterKeydb'), extensions: ['cfg'] },
+        { name: t('main.dialog.filterAllFiles'), extensions: ['*'] },
       ],
     });
     return res.canceled || !res.filePaths[0] ? null : res.filePaths[0];

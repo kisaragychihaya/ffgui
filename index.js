@@ -35,6 +35,10 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // 多语言：先应用持久化语言设置（主进程报错与弹窗标题据此翻译），再注册切换 IPC
+  const i18n = require('./main/i18n');
+  i18n.init();
+  i18n.registerI18nIpc();
   // 注册 ffmpeg 能力探测 / 文件选择 / 转换任务等 IPC
   require('./main/ffmpeg').registerIpc();
   // 光盘抓取：Rust 侧车 + 内部 FFmpeg 转码编排

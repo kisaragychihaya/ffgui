@@ -7,9 +7,13 @@
 // HTML 字符串；渲染层只传路径与轨号这类数据，FFmpeg 命令行由主进程拼装。
 (function () {
   // ---------- 纯逻辑开始（node:test 按标记整段提取，此段不得引用 DOM） ----------
+  const t = (key, vars) => (typeof window !== 'undefined' && window.i18n ? window.i18n.t(key, vars) : key);
+  // 上面这行必须是段首（测试按段首断言），且自包含：测试在 Node 里注入 window.i18n 后
+  // 本段即可直接求值，缺少注入时回退键名，不会抛 ReferenceError。
+
   const MODES = [
-    { value: 'copy', label: '无损 MKV（复制视频流，最快）' },
-    { value: 'transcode', label: '转码（重新编码）' },
+    { value: 'copy', labelKey: 'disc.modeCopy' },
+    { value: 'transcode', labelKey: 'disc.modeTranscode' },
   ];
 
   // 输出方式 -> 可用格式：无损模式仅 MKV，转码可选 MKV / MP4
@@ -19,12 +23,12 @@
 
   // copy 仅 MKV；transcode/MKV 音频可 copy 或 aac；transcode/MP4 音频只能 aac
   const AUDIO_OPTIONS = {
-    copy: [{ value: 'copy', label: '直接复制（不重编码）' }],
+    copy: [{ value: 'copy', labelKey: 'disc.audioCopy' }],
     'transcode-mkv': [
-      { value: 'copy', label: '直接复制（不重编码）' },
+      { value: 'copy', labelKey: 'disc.audioCopy' },
       { value: 'aac', label: 'AAC' },
     ],
-    'transcode-mp4': [{ value: 'aac', label: 'AAC（MP4 必须重编码）' }],
+    'transcode-mp4': [{ value: 'aac', labelKey: 'disc.audioAacMp4' }],
   };
 
   // MP4 容器不支持的图像字幕编码：出现时必须由用户主动把该标题字幕设为「不保留」
@@ -33,10 +37,10 @@
   // null=全部、[]=不保留、非空=指定轨；其他值一律拒绝
   function normalizeTrackIds(value) {
     if (value === null || value === undefined) return null;
-    if (!Array.isArray(value)) throw new Error('选轨必须是数组或 null');
+    if (!Array.isArray(value)) throw new Error(t('disc.logic.errTrackIds'));
     const ids = [];
     for (const v of value) {
-      if (typeof v !== 'string' || v === '') throw new Error('选轨序号必须是非空字符串');
+      if (typeof v !== 'string' || v === '') throw new Error(t('disc.logic.errTrackIdItem'));
       if (!ids.includes(v)) ids.push(v);
     }
     return ids;
@@ -98,51 +102,59 @@
     };
   }
 
-  // 提交前的整体校验：返回中文错误列表，空数组表示可以开始
+  // 提交前的整体校验：返回当前语言的错误列表，空数组表示可以开始
   function validateJob(job, titleStates) {
     const errors = [];
-    if (!job || typeof job !== 'object') return ['任务无效'];
-    if (!job.source || !job.source.path) errors.push('请先选择光盘来源');
-    if (!job.outputDir) errors.push('请选择输出目录');
-    if (!Array.isArray(job.titles) || job.titles.length === 0) errors.push('请至少勾选一个标题');
+    if (!job || typeof job !== 'object') return [t('disc.logic.errJobInvalid')];
+    if (!job.source || !job.source.path) errors.push(t('disc.logic.errNoSource'));
+    if (!job.outputDir) errors.push(t('disc.logic.errNoOutputDir'));
+    if (!Array.isArray(job.titles) || job.titles.length === 0) errors.push(t('disc.logic.errNoTitles'));
     if (!formatsForMode(job.mode) || !formatsForMode(job.mode).includes(job.format)) {
-      errors.push('输出方式与格式不兼容');
+      errors.push(t('disc.logic.errFormatMismatch'));
     }
     if (job.mode === 'transcode' && job.format === 'mp4' && job.audioCodec !== 'aac') {
-      errors.push('MP4 输出必须把音频编码设为 AAC');
+      errors.push(t('disc.logic.errMp4Audio'));
     }
     if (job.mode === 'copy' && job.audioCodec !== 'copy') {
-      errors.push('无损模式只能直接复制音频流');
+      errors.push(t('disc.logic.errCopyAudio'));
     }
 
     const byId = new Map((titleStates || []).map((t) => [t.title.id, t]));
     for (const entry of job.titles || []) {
       const st = byId.get(entry.titleId);
       if (!st) {
-        errors.push(`标题 ${entry.titleId} 不存在`);
+        errors.push(t('disc.logic.errTitleMissing', { title: entry.titleId }));
         continue;
       }
-      if (entry.audioTrackIds === undefined) errors.push(`标题 ${st.title.id} 未选择音轨`);
-      if (entry.subtitleTrackIds === undefined) errors.push(`标题 ${st.title.id} 未选择字幕`);
-      if (!st.selected) errors.push(`标题 ${st.title.id} 未勾选`);
+      if (entry.audioTrackIds === undefined) {
+        errors.push(t('disc.logic.errAudioUnset', { title: st.title.id }));
+      }
+      if (entry.subtitleTrackIds === undefined) {
+        errors.push(t('disc.logic.errSubsUnset', { title: st.title.id }));
+      }
+      if (!st.selected) errors.push(t('disc.logic.errTitleUnchecked', { title: st.title.id }));
       // 轨号必须真实存在于该标题的流列表里，防止越界或被伪造
-      const check = (ids, streams, what) => {
+      const check = (ids, streams, kind) => {
         if (!Array.isArray(ids)) return; // null=全部，无需逐一核对
         const known = new Set((streams || []).map((s) => String(s.id)));
         for (const id of ids) {
-          if (!known.has(String(id))) errors.push(`标题 ${st.title.id} 的${what}轨 ${id} 不存在`);
+          if (!known.has(String(id))) {
+            errors.push(t('disc.logic.errTrackMissing', {
+              title: st.title.id, kind, track: id,
+            }));
+          }
         }
       };
-      check(entry.audioTrackIds, st.title.audio, '音');
-      check(entry.subtitleTrackIds, st.title.subtitles, '字幕');
+      check(entry.audioTrackIds, st.title.audio, t('disc.logic.kindAudio'));
+      check(entry.subtitleTrackIds, st.title.subtitles, t('disc.logic.kindSubtitle'));
       // MP4 输出不写入任何字幕：每个勾选标题都必须显式选择「不保留」（[]）
       if (job.format === 'mp4') {
         const subs = entry.subtitleTrackIds;
         if (!Array.isArray(subs) || subs.length > 0) {
           const reason = hasImageSubtitles(st.title)
-            ? 'MP4 不支持 PGS / VobSub 图像字幕'
-            : 'MP4 输出不保留字幕';
-          errors.push(`${reason}：标题 ${st.title.id} 需主动把字幕设为「不保留」`);
+            ? t('disc.logic.reasonImageSubs')
+            : t('disc.logic.reasonNoSubs');
+          errors.push(t('disc.logic.errSubsExplicit', { reason, title: st.title.id }));
         }
       }
     }
@@ -186,8 +198,14 @@
   function passLabel(pass) {
     if (typeof pass !== 'string' || !pass.trim()) return '';
     const name = pass.trim();
-    const labels = { mux: '封装', sync: '同步', verify: '校验', sweep: '扫描' };
-    return `阶段：${labels[name.toLowerCase()] || name}`;
+    const labels = {
+      mux: 'disc.logic.stageMux',
+      sync: 'disc.logic.stageSync',
+      verify: 'disc.logic.stageVerify',
+      sweep: 'disc.logic.stageSweep',
+    };
+    const key = labels[name.toLowerCase()];
+    return t('disc.logic.stagePrefix', { stage: key ? t(key) : name });
   }
 
   // 轨道显示文案：语言 / 编码 / 标签（全部来自盘上元数据，不可信）
@@ -198,7 +216,7 @@
     if (stream && stream.codec) parts.push(String(stream.codec));
     const label = stream && stream.label ? String(stream.label) : '';
     if (label && label !== lang) parts.push(label);
-    return parts.length > 0 ? parts.join(' · ') : '未知轨道';
+    return parts.length > 0 ? parts.join(' · ') : t('disc.logic.unknownTrack');
   }
 
   function baseName(p) {
@@ -248,6 +266,9 @@
     source: null,        // { kind:'iso'|'folder'|'drive', path, label }
     drives: [],          // 物理光驱候选
     drivesSupported: false,
+    drivesLoaded: false, // 是否已完成一次枚举（用于语言切换后的提示重刷）
+    driveCode: null,     // 枚举返回的不支持码
+    driveError: null,    // 枚举异常文案
     disc: null,          // discProbe 结果
     keydbPath: null,
     outputDir: null,
@@ -258,6 +279,14 @@
     loadTicket: 0,       // 探测序号：忽略过期回调
   };
 
+  // 主进程错误码 -> 白话文案；映射不中就原样显示（错误码本身不翻译）
+  const DISC_ERROR_KEYS = {
+    FFGUI_DISC_SIDECAR_NOT_FOUND: 'disc.errSidecarMissing',
+    FFGUI_DISC_BUSY: 'disc.errBusy',
+    FFGUI_OUTPUT_DIR: 'disc.errOutputDir',
+    FFGUI_INVALID_JOB: 'disc.errInvalidJob',
+  };
+
   function log(text) {
     els.log.classList.remove('hidden');
     els.log.textContent += text + '\n';
@@ -265,7 +294,17 @@
   }
 
   function errText(err) {
-    return String((err && err.message) || err);
+    // 自定义 code 可能随 IPC 丢失，两种形态都尝试匹配
+    const code = err && typeof err.code === 'string' ? err.code : '';
+    if (DISC_ERROR_KEYS[code]) return t(DISC_ERROR_KEYS[code]);
+    const message = String((err && err.message) || err);
+    for (const known of Object.keys(DISC_ERROR_KEYS)) {
+      if (message.includes(known)) return t(DISC_ERROR_KEYS[known]);
+    }
+    // 主进程已按同一语言翻译过侧车缺失提示：用词典里的前缀兜底匹配（不写死中文）
+    const sidecarPrefix = t('main.disc.errSidecarMissing').split('{{')[0];
+    if (sidecarPrefix && message.startsWith(sidecarPrefix)) return t('disc.errSidecarMissing');
+    return message;
   }
 
   function setStatus(text) {
@@ -273,37 +312,60 @@
   }
 
   // ---------- 来源 ----------
+  function updateDriveHint() {
+    if (state.driveError) {
+      els.driveHint.textContent = t('disc.driveEnumFailed', { error: state.driveError });
+      return;
+    }
+    if (!state.drivesLoaded) {
+      els.driveHint.textContent = t('disc.hintEnumerating');
+      return;
+    }
+    if (!state.drivesSupported) {
+      els.driveHint.textContent = t('disc.driveUnsupported', {
+        code: state.driveCode ? `（${state.driveCode}）` : '',
+      });
+      return;
+    }
+    if (state.drives.length === 0) {
+      els.driveHint.textContent = t('disc.driveNone');
+      return;
+    }
+    els.driveHint.textContent = t('disc.driveHintSelect');
+  }
+
   async function refreshDrives() {
     els.refreshDrives.disabled = true;
-    els.driveHint.textContent = '正在枚举物理光驱…';
+    els.driveHint.textContent = t('disc.hintEnumerating');
     els.selDrive.disabled = true;
     els.selDrive.textContent = '';
+    state.driveCode = null;
+    state.driveError = null;
     try {
       const res = await window.ffgui.discListDrives();
       state.drives = Array.isArray(res && res.drives) ? res.drives : [];
       state.drivesSupported = !(res && res.code);
-      if (!state.drivesSupported) {
-        els.driveHint.textContent = '当前环境不支持枚举物理光驱'
-          + `${res && res.code ? `（${res.code}）` : ''}，请改用「选择 ISO 镜像」或「选择已提取目录」。`;
-        return;
-      }
-      if (state.drives.length === 0) {
-        els.driveHint.textContent = '未检测到物理光驱，可改用「选择 ISO 镜像」或「选择已提取目录」。';
-        return;
-      }
-      els.driveHint.textContent = '选择光驱后点击「开始探测」；读取过程中请保持光盘在位。';
+      state.driveCode = (res && res.code) || null;
+      state.drivesLoaded = true;
+      updateDriveHint();
+      if (!state.drivesSupported) return;
+      if (state.drives.length === 0) return;
       els.selDrive.disabled = false;
       for (const d of state.drives) {
         const opt = document.createElement('option');
         opt.value = String(d.path);
         // 盘上卷标不可信：只作为文本节点写入
-        opt.textContent = d.label && d.label !== d.path ? `${d.label}（${d.path}）` : String(d.path);
+        opt.textContent = d.label && d.label !== d.path
+          ? t('disc.driveOptionValue', { label: String(d.label), path: String(d.path) })
+          : String(d.path);
         els.selDrive.appendChild(opt);
       }
     } catch (err) {
       state.drivesSupported = false;
       state.drives = [];
-      els.driveHint.textContent = `枚举物理光驱失败：${errText(err)}，请改用 ISO 镜像或已提取目录。`;
+      state.drivesLoaded = true;
+      state.driveError = errText(err);
+      updateDriveHint();
     } finally {
       els.refreshDrives.disabled = false;
       updateButtons();
@@ -320,23 +382,23 @@
   }
 
   function sourceKindName(kind) {
-    if (kind === 'iso') return 'ISO 镜像';
-    if (kind === 'folder') return '已提取目录';
-    if (kind === 'drive') return '物理光驱';
-    return '来源';
+    if (kind === 'iso') return t('disc.kindIso');
+    if (kind === 'folder') return t('disc.kindFolder');
+    if (kind === 'drive') return t('disc.kindDrive');
+    return t('disc.kindSource');
   }
 
   function renderSource() {
     const src = currentSource();
     if (src) {
       const name = src.label && src.label !== src.path
-        ? `${baseName(src.path)}（${src.label}）`
+        ? t('disc.sourceWithLabel', { name: baseName(src.path), label: String(src.label) })
         : baseName(src.path);
-      els.sourceName.textContent = `${sourceKindName(src.kind)}：${name}`;
+      els.sourceName.textContent = t('disc.sourceCurrent', { kind: sourceKindName(src.kind), name });
       els.sourceName.title = String(src.path);
       els.clearSource.classList.remove('hidden');
     } else {
-      els.sourceName.textContent = '尚未选择来源';
+      els.sourceName.textContent = t('disc.sourceNone');
       els.sourceName.title = '';
       els.clearSource.classList.add('hidden');
     }
@@ -344,18 +406,18 @@
   }
 
   function confirmDiscard() {
-    return window.confirm('切换来源会清空已探测到的标题与选轨设置，确定继续吗？');
+    return window.confirm(t('disc.confirmDiscard'));
   }
 
   async function setSource(source) {
     // 任务进行中不允许切换来源（避免输出互相覆盖或选轨错乱）
     if (state.running) {
-      log('任务进行中，请先取消或等待完成后再切换来源');
+      log(t('disc.logRunningSwitchSource'));
       return;
     }
     // 探测进行中直接禁止切换：否则旧探测结果会渲染到新来源上
     if (state.probing) {
-      log('正在探测光盘，请等待探测结束再切换来源');
+      log(t('disc.logProbingSwitchSource'));
       return;
     }
     if (source && state.disc && !confirmDiscard()) return;
@@ -383,32 +445,32 @@
     if (state.probing) return;
     const src = currentSource();
     if (!src) {
-      setStatus('请先选择 ISO 镜像、已提取目录或物理光驱');
+      setStatus(t('disc.statusPickSource'));
       return;
     }
     if (state.disc && !confirmDiscard()) return;
     const ticket = ++state.loadTicket;
     state.probing = true;
     updateButtons();
-    setStatus('正在探测光盘…');
-    log(`开始探测：${baseName(src.path)}`);
+    setStatus(t('disc.statusProbing'));
+    log(t('disc.logProbeStart', { name: baseName(src.path) }));
 
     try {
       const disc = await window.ffgui.discProbe(src);
       if (ticket !== state.loadTicket) return; // 期间又换了来源
-      if (!disc || !Array.isArray(disc.titles)) throw new Error('探测结果不含标题列表');
+      if (!disc || !Array.isArray(disc.titles)) throw new Error(t('disc.errProbeNoTitles'));
       state.disc = disc;
       renderDisc(disc);
       els.titlesPanel.classList.remove('hidden');
       els.outputPanel.classList.remove('hidden');
       els.actionPanel.classList.remove('hidden');
-      setStatus(`探测完成，共 ${disc.titles.length} 个标题`);
-      log(`探测完成：${disc.titles.length} 个标题`);
+      setStatus(t('disc.statusProbeDone', { count: disc.titles.length }));
+      log(t('disc.logProbeDone', { count: disc.titles.length }));
     } catch (err) {
       if (ticket !== state.loadTicket) return;
       resetDisc();
-      setStatus('探测失败');
-      log(`✘ 探测失败：${errText(err)}`);
+      setStatus(t('disc.statusProbeFailed'));
+      log(t('disc.logProbeFailed', { error: errText(err) }));
     } finally {
       if (ticket === state.loadTicket) {
         state.probing = false;
@@ -417,7 +479,7 @@
     }
   }
 
-  function renderDisc(disc) {
+  function renderDiscMeta(disc) {
     els.discMeta.textContent = '';
     const addTag = (text, extraClass) => {
       const tag = document.createElement('span');
@@ -425,9 +487,15 @@
       tag.textContent = text;
       els.discMeta.appendChild(tag);
     };
-    addTag(`格式：${String(disc.format || '未知')}`);
-    if (disc.label) addTag(`卷标：${String(disc.label)}`);
-    if (disc.encrypted) addTag('加密光盘（可能需要密钥库）', 'encrypted');
+    addTag(t('disc.metaFormat', {
+      format: disc.format ? String(disc.format) : t('disc.metaUnknown'),
+    }));
+    if (disc.label) addTag(t('disc.metaLabel', { label: String(disc.label) }));
+    if (disc.encrypted) addTag(t('disc.metaEncrypted'), 'encrypted');
+  }
+
+  function renderDisc(disc) {
+    renderDiscMeta(disc);
 
     const defaults = new Set(defaultSelectedTitleIds(disc.titles));
     els.titleList.textContent = '';
@@ -461,26 +529,35 @@
 
     const name = document.createElement('span');
     name.className = 'disc-title-name';
-    name.textContent = `标题 ${String(title.id)}`;
 
     const meta = document.createElement('span');
     meta.className = 'disc-title-meta';
-    const bits = [formatDuration(title.durationMs)];
-    if (title.sizeBytes) bits.push(formatBytes(title.sizeBytes));
-    if (Number.isFinite(Number(title.chapters))) bits.push(`${title.chapters} 章`);
-    meta.textContent = bits.join(' · ');
 
     const stateEl = document.createElement('span');
     stateEl.className = 'disc-title-state';
     stateEl.textContent = '';
+
+    const renderName = () => {
+      name.textContent = t('disc.titleName', { id: String(title.id) });
+    };
+    const renderMeta = () => {
+      const bits = [formatDuration(title.durationMs)];
+      if (title.sizeBytes) bits.push(formatBytes(title.sizeBytes));
+      if (Number.isFinite(Number(title.chapters))) {
+        bits.push(t('disc.titleChapters', { count: title.chapters }));
+      }
+      meta.textContent = bits.join(' · ');
+    };
+    renderName();
+    renderMeta();
 
     head.append(box, name, meta, stateEl);
     root.appendChild(head);
 
     // 音轨/字幕组：标题未勾选时整体隐藏，勾选后才显示「全部 / 全不 / 逐项」
     const groups = [
-      createTrackGroup(entry, 'audio', '音轨', title.audio || [], box),
-      createTrackGroup(entry, 'subtitle', '字幕', title.subtitles || [], box),
+      createTrackGroup(entry, 'audio', title.audio || [], box),
+      createTrackGroup(entry, 'subtitle', title.subtitles || [], box),
     ];
     const tracks = document.createElement('div');
     tracks.className = 'disc-tracks';
@@ -501,38 +578,51 @@
         box.checked = checked;
         for (const g of groups) g.applyVisible();
       },
+      // 语言切换后重刷本行生成的全部文案（不动选轨状态）
+      refresh() {
+        renderName();
+        renderMeta();
+        for (const g of groups) g.refresh();
+      },
     };
   }
 
   // 单个轨道组：「全部」= null（保留所有轨），「全不」= []，逐项勾选=指定轨
-  function createTrackGroup(entry, kind, label, streams, titleBox) {
+  function createTrackGroup(entry, kind, streams, titleBox) {
     const root = document.createElement('div');
     root.className = 'disc-track-group';
 
     const head = document.createElement('div');
     head.className = 'disc-track-group-head';
     const headLabel = document.createElement('span');
-    headLabel.textContent = `${label}（${streams.length} 条）`;
+    const renderHead = () => {
+      headLabel.textContent = t('disc.groupCount', {
+        label: t(kind === 'audio' ? 'disc.groupAudio' : 'disc.groupSubtitle'),
+        count: streams.length,
+      });
+    };
+    renderHead();
     const bulk = document.createElement('span');
     bulk.className = 'disc-track-bulk';
     const allBtn = document.createElement('button');
     allBtn.type = 'button';
     allBtn.className = 'btn';
-    allBtn.textContent = '全部';
+    allBtn.textContent = t('disc.btnAll');
     const noneBtn = document.createElement('button');
     noneBtn.type = 'button';
     noneBtn.className = 'btn';
-    noneBtn.textContent = '全不';
+    noneBtn.textContent = t('disc.btnNone');
     bulk.append(allBtn, noneBtn);
     head.append(headLabel, bulk);
 
     const options = document.createElement('div');
     options.className = 'disc-track-options';
     const boxes = [];
+    let empty = null;
     if (streams.length === 0) {
-      const empty = document.createElement('span');
+      empty = document.createElement('span');
       empty.className = 'disc-track-empty';
-      empty.textContent = '无可用轨道';
+      empty.textContent = t('disc.trackEmpty');
       options.appendChild(empty);
     } else {
       for (const stream of streams) {
@@ -575,7 +665,16 @@
     const applyVisible = () => { root.classList.toggle('hidden', !titleBox.checked); };
 
     root.classList.add('hidden');
-    return { root, applyVisible };
+    return {
+      root,
+      applyVisible,
+      refresh() {
+        renderHead();
+        allBtn.textContent = t('disc.btnAll');
+        noneBtn.textContent = t('disc.btnNone');
+        if (empty) empty.textContent = t('disc.trackEmpty');
+      },
+    };
   }
 
   function setTitleState(entry, text, cls) {
@@ -598,7 +697,7 @@
     for (const item of items) {
       const opt = document.createElement('option');
       opt.value = item.value;
-      opt.textContent = item.label;
+      opt.textContent = item.labelKey ? t(item.labelKey) : item.label;
       select.appendChild(opt);
     }
     if (items.some((it) => it.value === value)) select.value = value;
@@ -649,14 +748,14 @@
   function updateStartHint() {
     const errors = jobErrors();
     if (state.running) {
-      els.startHint.textContent = '任务进行中：切换来源、改选轨或离开页面都会被拦截。';
+      els.startHint.textContent = t('disc.hintRunning');
       return;
     }
     if (errors.length > 0) {
       els.startHint.textContent = errors[0];
       return;
     }
-    els.startHint.textContent = `将抓取 ${selectedTitles().length} 个标题，输出到所选目录。`;
+    els.startHint.textContent = t('disc.hintPlan', { count: selectedTitles().length });
   }
 
   function updateButtons() {
@@ -686,6 +785,9 @@
 
   // ---------- 任务 ----------
   async function startJob() {
+    // 本函数会被测试单独抽取到独立上下文里执行，那里没有注入模块级 t：
+    // 用 typeof 判断后回退到键名，保证被抽取时不会抛 ReferenceError。
+    const tr = (key, vars) => (typeof t === 'function' ? t(key, vars) : key);
     if (state.running) return; // 防重复提交
     const errors = jobErrors();
     if (errors.length > 0) {
@@ -699,9 +801,13 @@
     els.log.classList.add('hidden');
     els.log.textContent = '';
     els.progressBar.style.setProperty('--progress-width', '0%');
-    setStatus('正在提交抓取任务…');
-    log(`开始抓取 ${job.titles.length} 个标题`
-      + `（${job.mode === 'copy' ? '无损 MKV' : `转码 ${FORMAT_LABELS[job.format]}`}）`);
+    setStatus(tr('disc.statusSubmitting'));
+    log(tr('disc.logStart', {
+      count: job.titles.length,
+      profile: job.mode === 'copy'
+        ? tr('disc.profileLossless')
+        : tr('disc.profileTranscode', { format: FORMAT_LABELS[job.format] }),
+    }));
     updateButtons();
 
     const off = window.ffgui.onDiscEvent((evt) => handleDiscEvent(evt));
@@ -710,14 +816,14 @@
       const width = els.progressBar.style.getPropertyValue('--progress-width');
       els.progressBar.style.setProperty('--progress-width', result.done >= result.total ? '100%' : width);
       setStatus(result.cancelled
-        ? '已取消'
-        : (result.done >= result.total ? '抓取完成' : '抓取失败，详见日志'));
+        ? tr('disc.statusCancelled')
+        : (result.done >= result.total ? tr('disc.statusDone') : tr('disc.statusFailedWithLog')));
       if (!result.cancelled && result.errors && result.errors.length > 0) {
-        log(`✘ ${result.errors.length} 个标题失败`);
+        log(tr('disc.logTitlesFailed', { count: result.errors.length }));
       }
     } catch (err) {
-      log(`✘ 抓取失败：${errText(err)}`);
-      setStatus('抓取失败');
+      log(tr('disc.logFetchFailed', { error: errText(err) }));
+      setStatus(tr('disc.statusFailed'));
     } finally {
       off();
       state.running = false;
@@ -730,14 +836,19 @@
     if (!evt || typeof evt.type !== 'string') return;
     switch (evt.type) {
       case 'start':
-        setStatus(`开始抓取，共 ${evt.total} 个标题`);
+        setStatus(t('disc.statusBegin', { count: evt.total }));
         break;
       case 'title-start': {
         const entry = state.titles.find((t) => t.title.id === evt.titleId);
-        if (entry) setTitleState(entry, evt.phase === 'rip' ? '抓取中…' : '转码中…', 'running');
-        const phase = evt.phase === 'rip' ? '抓取' : '转码';
-        setStatus(`${phase}标题 ${evt.titleId}（${Number(evt.index) + 1}）`);
-        if (evt.output) log(`— 标题 ${evt.titleId} ${phase}开始 → ${evt.output}`);
+        if (entry) {
+          setTitleState(entry,
+            evt.phase === 'rip' ? t('disc.stateRipping') : t('disc.stateTranscoding'), 'running');
+        }
+        const phase = evt.phase === 'rip' ? t('disc.phaseRip') : t('disc.phaseTranscode');
+        setStatus(t('disc.statusTitlePhase', {
+          phase, id: evt.titleId, index: Number(evt.index) + 1,
+        }));
+        if (evt.output) log(t('disc.logTitlePhaseStart', { id: evt.titleId, phase, output: evt.output }));
         break;
       }
       case 'progress': {
@@ -760,30 +871,43 @@
         if (evt.bytesDone) parts.push(formatBytes(evt.bytesDone));
         if (evt.bytesTotal) parts.push(`/ ${formatBytes(evt.bytesTotal)}`);
         if (evt.speedBps) parts.push(formatSpeed(evt.speedBps));
-        if (evt.etaSecs) parts.push(`剩余 ${formatEta(evt.etaSecs)}`);
+        if (evt.etaSecs) parts.push(t('disc.etaLeft', { eta: formatEta(evt.etaSecs) }));
         // pass 是 mux / sync / verify 这类阶段名，不是「第几遍」
         const stage = passLabel(evt.pass);
         if (stage) parts.push(stage);
-        setStatus(`${evt.phase === 'rip' ? '抓取' : '转码'}标题 ${evt.titleId}：${parts.join('  ')}`);
+        setStatus(t('disc.statusProgress', {
+          phase: evt.phase === 'rip' ? t('disc.phaseRip') : t('disc.phaseTranscode'),
+          id: evt.titleId,
+          detail: parts.join('  '),
+        }));
         break;
       }
       case 'title-done': {
         const entry = state.titles.find((t) => t.title.id === evt.titleId);
-        if (entry) setTitleState(entry, '完成', 'done');
-        if (evt.output) log(`✔ 标题 ${evt.titleId} 完成 → ${evt.output}`);
+        if (entry) setTitleState(entry, t('disc.stateDone'), 'done');
+        if (evt.output) log(t('disc.logTitleDone', { id: evt.titleId, output: evt.output }));
         break;
       }
       case 'title-error': {
         const entry = state.titles.find((t) => t.title.id === evt.titleId);
-        if (entry) setTitleState(entry, '失败', 'error');
-        log(`✘ 标题 ${evt.titleId} 失败：${evt.code}${evt.params ? ` ${JSON.stringify(evt.params)}` : ''}`);
+        if (entry) setTitleState(entry, t('disc.stateFailed'), 'error');
+        // 错误码是主进程的内部标记，不翻译，只把周围文案本地化
+        log(t('disc.logTitleError', {
+          id: evt.titleId,
+          code: evt.code,
+          params: evt.params ? ` ${JSON.stringify(evt.params)}` : '',
+        }));
         break;
       }
       case 'log':
         if (evt.message) log(String(evt.message));
         break;
       case 'done':
-        log(`任务结束：完成 ${evt.done}/${evt.total}${evt.cancelled ? '（已取消）' : ''}`);
+        log(t('disc.logJobEnd', {
+          done: evt.done,
+          total: evt.total,
+          cancelled: evt.cancelled ? t('disc.logJobEndCancelled') : '',
+        }));
         break;
       default:
         break;
@@ -793,7 +917,7 @@
   // ---------- 事件绑定 ----------
   els.back.addEventListener('click', () => {
     if (state.running) {
-      log('任务进行中，请先取消或等待完成后再返回首页');
+      log(t('disc.logBackRunning'));
       return;
     }
     window.location.href = 'index.html';
@@ -869,8 +993,8 @@
   els.start.addEventListener('click', startJob);
   els.cancel.addEventListener('click', () => {
     window.ffgui.discCancel(state.jobId);
-    setStatus('正在取消…');
-    log('已请求取消，等待当前标题结束…');
+    setStatus(t('disc.statusCancelling'));
+    log(t('disc.logCancelRequested'));
   });
 
   // 任务进行中阻止离开页面（beforeunload 无对话框，仅拦截卸载）
@@ -878,9 +1002,23 @@
     if (state.running) {
       e.preventDefault();
       e.returnValue = false;
-      setStatus('正在抓取中，请先取消或等待完成再离开页面');
+      setStatus(t('disc.statusLeaveRunning'));
     }
   });
+
+  // 语言切换后重刷本页生成的文案：光驱提示、来源名、探测信息、标题行、下拉与提示。
+  // 已写入日志区的内容与当前状态行保持生成时语言（不回改）。
+  if (window.i18n && typeof window.i18n.onChange === 'function') {
+    window.i18n.onChange(() => {
+      updateDriveHint();
+      renderSource();
+      if (state.disc) renderDiscMeta(state.disc);
+      for (const entry of state.titles) {
+        if (entry.row && typeof entry.row.refresh === 'function') entry.row.refresh();
+      }
+      updateFormatOptions();
+    });
+  }
 
   refreshDrives();
   renderSource();

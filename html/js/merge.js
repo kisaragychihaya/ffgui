@@ -1,17 +1,19 @@
 // 音视频合并页逻辑
 // 队列支持拖入文件与拖动排序；纯音频队列只拼音频，混合队列中音频段以黑屏画面并入视频
 (function () {
-  // 输出格式候选
+  const t = window.i18n.t;
+
+  // 输出格式候选（labelKey 走词典；技术名各语言一致）
   const VIDEO_FORMATS = [
-    { value: 'mp4', label: 'MP4' },
-    { value: 'mkv', label: 'MKV' },
+    { value: 'mp4', labelKey: 'merge.fmtMp4' },
+    { value: 'mkv', labelKey: 'merge.fmtMkv' },
   ];
   const AUDIO_FORMATS = [
-    { value: 'mp3', label: 'MP3' },
-    { value: 'm4a', label: 'M4A' },
-    { value: 'flac', label: 'FLAC' },
-    { value: 'wav', label: 'WAV' },
-    { value: 'ogg', label: 'OGG' },
+    { value: 'mp3', labelKey: 'merge.fmtMp3' },
+    { value: 'm4a', labelKey: 'merge.fmtM4a' },
+    { value: 'flac', labelKey: 'merge.fmtFlac' },
+    { value: 'wav', labelKey: 'merge.fmtWav' },
+    { value: 'ogg', labelKey: 'merge.fmtOgg' },
   ];
 
   // 与主进程文件选择对话框保持一致的媒体扩展名
@@ -85,7 +87,7 @@
     if (state.files.length === 0) {
       const li = document.createElement('li');
       li.className = 'file-list-empty';
-      li.textContent = '尚未添加文件，点击「添加文件」或将音视频文件拖拽到此处';
+      li.textContent = t('merge.queueEmpty');
       els.fileList.appendChild(li);
     } else {
       state.files.forEach((file, i) => {
@@ -97,11 +99,11 @@
         const handle = document.createElement('span');
         handle.className = 'drag-handle';
         handle.textContent = '⠿';
-        handle.title = '拖动调整顺序';
+        handle.title = t('merge.dragHandle');
 
         const badge = document.createElement('span');
         badge.className = `file-badge ${file.hasVideo ? 'badge-video' : 'badge-audio'}`;
-        badge.textContent = file.hasVideo ? '视频' : '音频';
+        badge.textContent = file.hasVideo ? t('merge.badgeVideo') : t('merge.badgeAudio');
 
         const name = document.createElement('span');
         name.className = 'file-name';
@@ -116,7 +118,7 @@
         remove.className = 'file-remove';
         remove.type = 'button';
         remove.textContent = '×';
-        remove.title = '移除';
+        remove.title = t('merge.removeItem');
         remove.addEventListener('click', () => {
           if (state.running) return;
           state.files.splice(i, 1);
@@ -176,7 +178,8 @@
     els.subOptions.classList.toggle('hidden', !sub);
     els.clearSubtitle.classList.toggle('hidden', !sub);
     if (sub) {
-      els.subtitleInfo.textContent = `${baseName(sub.path)}（${formatSeconds(sub.duration)}）`;
+      els.subtitleInfo.textContent = t('merge.subtitleInfo',
+        { name: baseName(sub.path), duration: formatSeconds(sub.duration) });
       els.subtitleInfo.title = sub.path;
     }
   }
@@ -185,7 +188,7 @@
     if (!p || state.running) return;
     const duration = await window.ffgui.probeSubtitle(p);
     if (!duration) {
-      log(`无法从字幕文件中读取时间轴：${baseName(p)}`);
+      log(t('merge.errSubtitleRead', { name: baseName(p) }));
       return;
     }
     state.subtitle = { path: p, duration };
@@ -202,7 +205,7 @@
     for (const item of items) {
       const opt = document.createElement('option');
       opt.value = item.value;
-      opt.textContent = item.label;
+      opt.textContent = t(item.labelKey);
       els.format.appendChild(opt);
     }
     if (items.some((it) => it.value === current)) els.format.value = current;
@@ -221,7 +224,7 @@
       }
       state.files.push({ path: p.file, duration: p.duration, hasVideo: p.hasVideo, hasAudio: p.hasAudio });
     }
-    if (skipped > 0) log(`已忽略 ${skipped} 个无法识别的文件（无音视频流）`);
+    if (skipped > 0) log(t('merge.logSkippedInvalid', { count: skipped }));
     renderFileList();
   }
 
@@ -246,7 +249,7 @@
     const minFiles = state.subtitle ? 1 : 2;
     if (state.files.length < minFiles) return;
     if (state.subtitle && !anyVideo()) {
-      log('纯音频队列不支持添加字幕，请先移除字幕文件');
+      log(t('merge.errSubtitleAudioOnly'));
       return;
     }
     // 字幕时长需与合并后的整段视频一致，不匹配时弹警告由用户确认
@@ -255,9 +258,8 @@
       const diff = Math.abs(state.subtitle.duration - total);
       // 容差 ±10 秒：字幕与整段视频时长差在 10 秒内视为匹配
       if (diff > 10) {
-        const ok = window.confirm(
-          `警告：字幕时长（${formatSeconds(state.subtitle.duration)}）与合并后视频时长`
-          + `（${formatSeconds(total)}）不一致，合并后字幕可能与画面不同步。\n\n仍要继续吗？`);
+        const ok = window.confirm(t('merge.confirmSubtitleMismatch',
+          { subtitle: formatSeconds(state.subtitle.duration), total: formatSeconds(total) }));
         if (!ok) return;
       }
     }
@@ -282,9 +284,9 @@
         els.status.textContent = `${evt.percent}%  ${formatSeconds(evt.time)}/${formatSeconds(evt.duration)}`
           + (evt.speed ? `  ${evt.speed}` : '');
       } else if (evt.type === 'file-done') {
-        log(`✔ 合并完成 → ${evt.output}`);
+        log(t('merge.logDone', { output: evt.output }));
       } else if (evt.type === 'file-error') {
-        log(`✘ 合并失败：${evt.error}`);
+        log(t('merge.logFileError', { error: evt.error }));
       }
     });
 
@@ -292,11 +294,11 @@
       const result = await window.ffgui.merge(job);
       els.progressBar.style.width = result.done === result.total ? '100%' : els.progressBar.style.width;
       els.status.textContent = result.cancelled
-        ? '已取消'
-        : (result.done === result.total ? '合并完成' : '合并失败，详见日志');
+        ? t('merge.statusCancelled')
+        : (result.done === result.total ? t('merge.statusDone') : t('merge.statusFailedSeeLog'));
     } catch (err) {
-      log(`合并失败：${String(err && err.message || err)}`);
-      els.status.textContent = '合并失败';
+      log(t('merge.logMergeError', { error: String(err && err.message || err) }));
+      els.status.textContent = t('merge.statusFailed');
     } finally {
       off();
       setRunning(false);
@@ -322,7 +324,7 @@
   els.start.addEventListener('click', startMerge);
   els.cancel.addEventListener('click', () => {
     window.ffgui.cancelConvert();
-    els.status.textContent = '正在取消…';
+    els.status.textContent = t('merge.statusCancelling');
   });
   els.pickSubtitle.addEventListener('click', async () => {
     await setSubtitle(await window.ffgui.pickSubtitle());
@@ -370,7 +372,7 @@
       const p = window.ffgui.getPathForFile(file);
       if (p) paths.push(p);
     }
-    if (skipped > 0) log(`已忽略 ${skipped} 个不支持的文件`);
+    if (skipped > 0) log(t('merge.logSkippedUnsupported', { count: skipped }));
     await addFiles(paths);
   });
 
@@ -399,9 +401,15 @@
         return;
       }
     }
-    log('请将 .srt / .ass / .ssa / .vtt 字幕文件拖到此处');
+    log(t('merge.errDropSubtitle'));
   });
 
   renderFileList();
   renderSubtitle();
+
+  // 语言切换：重绘队列（含输出格式选项）与字幕信息；日志行保持生成时语言
+  window.i18n.onChange(() => {
+    renderFileList();
+    renderSubtitle();
+  });
 })();

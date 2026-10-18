@@ -7,6 +7,8 @@
 // 杜绝截断已完成的文件）；录制结果可一键转 MP4（ffmpeg 视频流复制 +
 // 音频转 AAC，进度复用 convert-event）
 (function () {
+  const t = window.i18n.t;
+
   // ---------- DOM ----------
   const $ = (id) => document.getElementById(id);
   const els = {
@@ -93,9 +95,14 @@
     return '';
   }
 
+  // 来源名：未选择时显示占位文案，已选择时显示来源名称
+  function renderSourceName() {
+    els.sourceName.textContent = state.sourceName || t('record.sourceNone');
+  }
+
   function updateUI() {
     const rec = state.recording;
-    els.start.textContent = rec ? '停止录制' : '开始录制';
+    els.start.textContent = rec ? t('record.btnStop') : t('record.btnStart');
     els.start.disabled = state.starting || state.stopping
       || (!rec && (!state.captureStream || state.busyRemux));
     els.cancel.classList.toggle('hidden', !rec);
@@ -120,36 +127,51 @@
     const p = els.preview.play();
     if (p && p.catch) p.catch(() => {});
     els.previewEmpty.classList.add('hidden');
-    els.sourceName.textContent = sourceName || '已选择';
+    els.sourceName.textContent = sourceName || t('record.sourceSelected');
     const audioTracks = stream.getAudioTracks();
-    log(`来源「${els.sourceName.textContent}」：视频轨 ${stream.getVideoTracks().length} 条`
-      + `，音频轨 ${audioTracks.length} 条`
-      + (audioTracks.length ? `（${audioTracks[0].label}，${audioTracks[0].readyState}）` : ''));
+    log(t('record.logSource', {
+      name: els.sourceName.textContent,
+      video: stream.getVideoTracks().length,
+      audio: audioTracks.length,
+    }) + (audioTracks.length
+      ? t('record.logSourceAudio', { label: audioTracks[0].label, state: audioTracks[0].readyState })
+      : ''));
     if (els.chkSysAudio.checked && audioTracks.length === 0) {
-      els.status.textContent = '已选择来源，但系统声音不可用'
-        + (window.ffgui.platform === 'darwin' ? '（macOS 不支持系统声音回环）' : '（可尝试重新选择）');
+      els.status.textContent = t('record.errNoSysAudio')
+        + (window.ffgui.platform === 'darwin'
+          ? t('record.errNoSysAudioMac')
+          : t('record.errNoSysAudioHint'));
     }
     updateUI();
   }
 
+  // 来源网格里的提示行：建元素 + textContent，绝不把译文拼进 innerHTML
+  function showSourceMessage(key) {
+    els.sourceGrid.textContent = '';
+    const p = document.createElement('p');
+    p.className = 'record-source-empty';
+    p.textContent = t(key);
+    els.sourceGrid.appendChild(p);
+  }
+
   async function openSourcePicker() {
     if (state.recording || state.starting || state.busyRemux) return;
-    els.sourceGrid.innerHTML = '<p class="record-source-empty">正在枚举屏幕 / 窗口…</p>';
+    showSourceMessage('record.sourceEnumerating');
     els.sourceModal.classList.remove('hidden');
     let sources;
     try {
       sources = await window.ffgui.getDesktopSources();
     } catch (err) {
       els.sourceModal.classList.add('hidden');
-      els.status.textContent = `枚举来源失败：${errText(err)}`;
-      log(`✘ 枚举来源失败：${errText(err)}`);
+      els.status.textContent = t('record.errEnumerate', { err: errText(err) });
+      log(t('record.logEnumerateFailed', { err: errText(err) }));
       return;
     }
     if (!sources.length) {
-      els.sourceGrid.innerHTML = '<p class="record-source-empty">没有可用的屏幕 / 窗口来源</p>';
+      showSourceMessage('record.sourceEmpty');
       return;
     }
-    els.sourceGrid.innerHTML = '';
+    els.sourceGrid.textContent = '';
     for (const s of sources) {
       const item = document.createElement('button');
       item.type = 'button';
@@ -171,7 +193,7 @@
 
   async function chooseSource(s) {
     els.sourceModal.classList.add('hidden');
-    els.status.textContent = '正在启动采集…';
+    els.status.textContent = t('record.statusStartingCapture');
     try {
       // 先登记来源，getDisplayMedia 时主进程 handler 按此授予
       await window.ffgui.prepareDesktopSource(s.id);
@@ -182,10 +204,10 @@
       setCapture(stream, s.name);
       state.sourceId = s.id;
       state.sourceName = s.name;
-      els.status.textContent = '已选择来源，可以开始录制';
+      els.status.textContent = t('record.statusSourceReady');
     } catch (err) {
-      els.status.textContent = `采集失败：${errText(err)}`;
-      log(`✘ 采集失败：${errText(err)}`);
+      els.status.textContent = t('record.errCapture', { err: errText(err) });
+      log(t('record.logCaptureFailed', { err: errText(err) }));
     }
   }
 
@@ -196,7 +218,7 @@
       openSourcePicker();
       return;
     }
-    els.status.textContent = '正在按之前选择的来源重新采集…';
+    els.status.textContent = t('record.statusReacquiring');
     try {
       await window.ffgui.prepareDesktopSource(state.sourceId);
       const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -204,11 +226,11 @@
         audio: els.chkSysAudio.checked,
       });
       setCapture(stream, state.sourceName);
-      els.status.textContent = '已重新采集（含系统声音），可以开始录制';
+      els.status.textContent = t('record.statusReacquired');
     } catch (err) {
       state.sourceId = null;
-      els.status.textContent = `按之前的选择重新采集失败（${errText(err)}），请重新选择来源`;
-      log(`✘ 重新采集失败（${errText(err)}），请重新选择来源`);
+      els.status.textContent = t('record.errReacquire', { err: errText(err) });
+      log(t('record.logReacquireFailed', { err: errText(err) }));
       openSourcePicker();
     }
   }
@@ -236,13 +258,13 @@
     mics.forEach((d, i) => {
       const opt = document.createElement('option');
       opt.value = d.deviceId;
-      opt.textContent = d.label || `麦克风 ${i + 1}`;
+      opt.textContent = d.label || t('record.micFallback', { n: i + 1 });
       els.selMic.appendChild(opt);
     });
     if (mics.length === 0) {
       const opt = document.createElement('option');
       opt.value = '';
-      opt.textContent = '默认';
+      opt.textContent = t('record.micDefault');
       els.selMic.appendChild(opt);
     }
   }
@@ -273,7 +295,9 @@
     els.recTime.textContent = '0:00:00';
     state.recTimer = setInterval(() => {
       els.recTime.textContent = formatTime((Date.now() - t0) / 1000);
-      els.status.textContent = `录制中… ${(state.bytesWritten / 1048576).toFixed(1)} MB`;
+      els.status.textContent = t('record.statusRecordingMb', {
+        mb: (state.bytesWritten / 1048576).toFixed(1),
+      });
     }, 500);
   }
 
@@ -294,7 +318,7 @@
       // 系统声音校验：勾选了但当前来源没有音轨（多半是勾选发生在选择来源之后），
       // 录制出无声文件不如明确拦截
       if (els.chkSysAudio.checked && state.captureStream.getAudioTracks().length === 0) {
-        els.status.textContent = '当前来源不含系统声音轨，请勾选「录制系统声音」后重新选择来源';
+        els.status.textContent = t('record.errSysAudioMissing');
         return;
       }
       // 按当前勾选项与所选设备取麦克风
@@ -302,7 +326,7 @@
         try {
           await acquireMic();
         } catch (err) {
-          els.status.textContent = `麦克风不可用，无法开始录制：${errText(err)}`;
+          els.status.textContent = t('record.errMicUnavailable', { err: errText(err) });
           return;
         }
       } else {
@@ -318,7 +342,7 @@
           outPath = null;
         }
         if (!outPath) {
-          els.status.textContent = '未选择保存位置，未开始录制';
+          els.status.textContent = t('record.errNoOutput');
           return;
         }
         state.outFile = outPath;
@@ -329,7 +353,7 @@
       try {
         await window.ffgui.recordStart(outPath);
       } catch (err) {
-        els.status.textContent = `无法开始写盘：${errText(err)}`;
+        els.status.textContent = t('record.errStartWrite', { err: errText(err) });
         return;
       }
 
@@ -348,7 +372,7 @@
         try {
           recorder = new MediaRecorder(stream);
         } catch (err) {
-          els.status.textContent = `无法启动录制器：${errText(err)}`;
+          els.status.textContent = t('record.errRecorder', { err: errText(err) });
           try { await window.ffgui.recordDiscard(outPath); } catch { /* 忽略 */ }
           return;
         }
@@ -376,13 +400,13 @@
         });
       };
       recorder.onerror = (e) => {
-        state.recordError = e.error || new Error('录制器错误');
+        state.recordError = e.error || new Error(t('record.errRecorderMessage'));
       };
       recorder.start(1000);
 
       state.recording = true;
       els.remux.classList.add('hidden');
-      els.status.textContent = '录制中…';
+      els.status.textContent = t('record.statusRecording');
       startTimer();
     } finally {
       state.starting = false;
@@ -429,10 +453,10 @@
     if (!save || failed) {
       try { await window.ffgui.recordDiscard(outPath); } catch { /* 忽略 */ }
       if (save) {
-        els.status.textContent = `录制失败（${errText(failed)}），已清理半成品文件`;
-        log(`✘ 录制失败：${errText(failed)}`);
+        els.status.textContent = t('record.errRecordFailed', { err: errText(failed) });
+        log(t('record.logRecordFailed', { err: errText(failed) }));
       } else {
-        els.status.textContent = '已取消，半成品文件已清理';
+        els.status.textContent = t('record.statusCancelledCleaned');
       }
     } else {
       try {
@@ -440,19 +464,19 @@
         if (res.ok) {
           state.lastSaved = res.path;
           const mb = (res.size / 1048576).toFixed(1);
-          els.status.textContent = `录制完成（${mb} MB）`;
-          log(`✔ 录制完成 → ${res.path}（${mb} MB）`);
+          els.status.textContent = t('record.statusDone', { mb });
+          log(t('record.logDone', { path: res.path, mb }));
           els.remux.classList.remove('hidden');
           // 下次录制重新询问保存位置
           state.outFile = null;
           els.inputOutfile.value = '';
         } else {
-          els.status.textContent = '保存录制文件失败';
-          log('✘ 保存录制文件失败');
+          els.status.textContent = t('record.errSave');
+          log(t('record.logSaveFailed'));
         }
       } catch (err) {
-        els.status.textContent = `保存录制文件失败：${errText(err)}`;
-        log(`✘ 保存录制文件失败：${errText(err)}`);
+        els.status.textContent = t('record.errSaveWith', { err: errText(err) });
+        log(t('record.logSaveFailedWith', { err: errText(err) }));
       }
     }
 
@@ -470,27 +494,28 @@
     state.busyRemux = true;
     els.progressTrack.classList.remove('hidden');
     els.progressBar.style.setProperty('--progress-width', '0%');
-    els.status.textContent = '转 MP4 中…';
+    els.status.textContent = t('record.statusRemuxing');
 
     const off = window.ffgui.onConvertEvent((evt) => {
       if (evt.type === 'progress') {
         els.progressBar.style.setProperty('--progress-width', `${evt.percent}%`);
-        els.status.textContent = `转 MP4 中… ${evt.percent}%`;
+        els.status.textContent = t('record.statusRemuxingProgress', { percent: evt.percent });
       } else if (evt.type === 'file-done') {
-        log(`✔ 已转 MP4 → ${evt.output}`);
+        log(t('record.logRemuxDone', { output: evt.output }));
       } else if (evt.type === 'file-error') {
-        log(`✘ 转 MP4 失败：${evt.error}`);
+        log(t('record.logRemuxFailed', { err: evt.error }));
       }
     });
 
     try {
       const res = await window.ffgui.recordRemux(state.lastSaved);
       els.progressBar.style.setProperty('--progress-width', res.done ? '100%' : '0%');
-      els.status.textContent = res.done ? `已转 MP4 → ${res.output}`
-        : (res.cancelled ? '已取消' : '转 MP4 失败，详见日志');
+      els.status.textContent = res.done
+        ? t('record.statusRemuxDone', { output: res.output })
+        : (res.cancelled ? t('record.statusCancelled') : t('record.statusRemuxFailedSeeLog'));
     } catch (err) {
-      log(`✘ 转 MP4 失败：${errText(err)}`);
-      els.status.textContent = '转 MP4 失败';
+      log(t('record.logRemuxFailed', { err: errText(err) }));
+      els.status.textContent = t('record.statusRemuxFailed');
     } finally {
       off();
       state.busyRemux = false;
@@ -505,7 +530,7 @@
     if (state.recording) {
       e.preventDefault();
       e.returnValue = false;
-      els.status.textContent = '正在录制中，请先停止录制再返回首页';
+      els.status.textContent = t('record.errLeaveWhileRecording');
     }
   });
   window.addEventListener('unload', () => {
@@ -538,7 +563,7 @@
         els.inputOutfile.value = p;
       }
     } catch (err) {
-      els.status.textContent = `选择输出文件失败：${errText(err)}`;
+      els.status.textContent = t('record.errPickOutput', { err: errText(err) });
     }
   });
 
@@ -551,7 +576,7 @@
         els.itemMicDevice.classList.remove('hidden');
       } catch (err) {
         els.chkMic.checked = false;
-        els.status.textContent = `麦克风不可用或已拒绝授权：${errText(err)}`;
+        els.status.textContent = t('record.errMicDenied', { err: errText(err) });
       }
     } else {
       stopMicStream();
@@ -568,5 +593,14 @@
     }
   });
 
+  // ---------- 语言切换：重刷本页生成的动态文案 ----------
+  // 静态标注由 i18n.js 的 applyStatic 处理；来源名（applyStatic 会写回占位文案）与
+  // 开始/停止按钮标签需要按当前状态重刷。麦克风设备列表要异步枚举，不在此重刷。
+  window.i18n.onChange(() => {
+    updateUI();
+    renderSourceName();
+  });
+
+  renderSourceName();
   updateUI();
 })();

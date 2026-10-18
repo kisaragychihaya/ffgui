@@ -27,6 +27,30 @@ assert.ok(endLine > startLine, '找不到纯逻辑结束标记所在行');
 const logic = discLines.slice(startLine + 1, endLine).join('\n');
 assert.match(logic.trimStart(), /^(?:const|function|let)\b/, '纯逻辑段必须以代码开始，不得残留注释尾巴');
 
+// 纯逻辑段里的 t() 从 window.i18n 取词：这里注入真实 zh-CN 词典，
+// 使断言仍校验用户看到的中文原文（词典改动会在此暴露）。
+const zhDict = JSON.parse(fs.readFileSync(path.join(repo, 'locales/zh-CN.json'), 'utf8'));
+function dictLookup(dict, key) {
+  let node = dict;
+  for (const part of key.split('.')) {
+    if (!node || typeof node !== 'object') return undefined;
+    node = node[part];
+  }
+  return typeof node === 'string' ? node : undefined;
+}
+global.window = {
+  i18n: {
+    t(key, vars) {
+      let text = dictLookup(zhDict, key);
+      if (text === undefined) return key;
+      if (vars) {
+        for (const [name, value] of Object.entries(vars)) text = text.split(`{{${name}}}`).join(String(value));
+      }
+      return text;
+    },
+  },
+};
+
 // 纯逻辑在与测试同一 realm 内求值（仅用函数包一层，避免污染本文件的顶层作用域）：
 // 跨 realm 求值得到的数组/对象原型不同，assert.deepEqual（strict）会误判为不等。
 const LOGIC_EXPORTS = [

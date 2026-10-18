@@ -1,7 +1,10 @@
 // 音视频转码页逻辑
 // 可选项（格式 / 编码器 / 硬件加速）全部基于主进程探测到的 ffmpeg 真实能力动态生成
 (function () {
+  const t = window.i18n.t;
+
   // ---------- 候选清单（value 与 ffmpeg 参数对应，muxer 用于校验封装格式支持） ----------
+  // 需要翻译的标签用 labelKey 走词典；纯技术名保留 label 字面量
   const FORMATS = [
     { value: 'mp4', label: 'MP4', muxer: 'mp4' },
     { value: 'mkv', label: 'MKV', muxer: 'matroska' },
@@ -12,21 +15,21 @@
     { value: 'ts', label: 'TS', muxer: 'mpegts' },
     { value: 'wmv', label: 'WMV', muxer: 'asf' },
     { value: '3gp', label: '3GP', muxer: '3gp' },
-    { value: 'gif', label: 'GIF（动图，无音频）', muxer: 'gif' },
-    { value: 'mp3', label: 'MP3（纯音频）', muxer: 'mp3' },
-    { value: 'm4a', label: 'M4A（纯音频）', muxer: 'ipod' },
-    { value: 'flac', label: 'FLAC（纯音频）', muxer: 'flac' },
-    { value: 'wav', label: 'WAV（纯音频）', muxer: 'wav' },
-    { value: 'ogg', label: 'OGG（纯音频）', muxer: 'ogg' },
-    { value: 'opus', label: 'OPUS（纯音频）', muxer: 'opus' },
+    { value: 'gif', labelKey: 'convert.formatGif', muxer: 'gif' },
+    { value: 'mp3', labelKey: 'convert.formatMp3', muxer: 'mp3' },
+    { value: 'm4a', labelKey: 'convert.formatM4a', muxer: 'ipod' },
+    { value: 'flac', labelKey: 'convert.formatFlac', muxer: 'flac' },
+    { value: 'wav', labelKey: 'convert.formatWav', muxer: 'wav' },
+    { value: 'ogg', labelKey: 'convert.formatOgg', muxer: 'ogg' },
+    { value: 'opus', labelKey: 'convert.formatOpus', muxer: 'opus' },
   ];
   const AUDIO_ONLY = new Set(['mp3', 'm4a', 'flac', 'wav', 'ogg', 'opus']);
   // 无音频轨的格式（隐藏音频编码选项，主进程会加 -an）
   const VIDEO_ONLY = new Set(['gif']);
 
   const VCODECS = [
-    { value: 'auto', label: '自动（按容器默认）' },
-    { value: 'copy', label: '直接复制（不重编码）' },
+    { value: 'auto', labelKey: 'convert.vcodecAuto' },
+    { value: 'copy', labelKey: 'convert.vcodecCopy' },
     { value: 'libx264', label: 'H.264 (libx264)' },
     { value: 'libx265', label: 'H.265/HEVC (libx265)' },
     { value: 'libopenh264', label: 'H.264 (OpenH264)' },
@@ -48,31 +51,31 @@
     { value: 'libvpx-vp9', label: 'VP9 (libvpx)' },
     { value: 'vp9_qsv', label: 'VP9 (Intel QSV)' },
     { value: 'libaom-av1', label: 'AV1 (libaom)' },
-    { value: 'libsvtav1', label: 'AV1 (SVT-AV1，软件快速)' },
+    { value: 'libsvtav1', labelKey: 'convert.vcodecSvtAv1' },
     { value: 'libxvid', label: 'MPEG-4 (Xvid)' },
     { value: 'wmv2', label: 'WMV2 (Windows Media Video 8)' },
-    { value: 'mpeg2video', label: 'MPEG-2（DVD）' },
-    { value: 'prores_ks', label: 'ProRes（剪辑用）' },
+    { value: 'mpeg2video', labelKey: 'convert.vcodecMpeg2' },
+    { value: 'prores_ks', labelKey: 'convert.vcodecProres' },
     { value: 'prores_videotoolbox', label: 'ProRes (VideoToolbox)' },
     { value: 'mpeg4', label: 'MPEG-4' },
-    { value: 'none', label: '无视频（提取音频）' },
+    { value: 'none', labelKey: 'convert.vcodecNone' },
   ];
 
   const ACODECS = [
-    { value: 'auto', label: '自动（按容器默认）' },
-    { value: 'copy', label: '直接复制（不重编码）' },
+    { value: 'auto', labelKey: 'convert.acodecAuto' },
+    { value: 'copy', labelKey: 'convert.acodecCopy' },
     { value: 'aac', label: 'AAC' },
-    { value: 'aac_at', label: 'AAC (AudioToolbox，Mac 硬件)' },
+    { value: 'aac_at', labelKey: 'convert.acodecAacAt' },
     { value: 'libmp3lame', label: 'MP3 (LAME)' },
     { value: 'libopus', label: 'Opus' },
     { value: 'libvorbis', label: 'Vorbis' },
     { value: 'flac', label: 'FLAC' },
-    { value: 'alac', label: 'ALAC（Apple 无损）' },
+    { value: 'alac', labelKey: 'convert.acodecAlac' },
     { value: 'ac3', label: 'AC-3' },
     { value: 'eac3', label: 'E-AC-3' },
     { value: 'wmav2', label: 'WMA v2' },
-    { value: 'pcm_s16le', label: 'PCM（无损）' },
-    { value: 'none', label: '无音频' },
+    { value: 'pcm_s16le', labelKey: 'convert.acodecPcm' },
+    { value: 'none', labelKey: 'convert.acodecNone' },
   ];
 
   // ---------- DOM ----------
@@ -155,23 +158,23 @@
 
   // 分辨率解析：返回 {w,h} 或 {percent}；null=不缩放（默认）；'invalid'=无法识别
   function parseScale(text) {
-    const t = (text || '').trim().toLowerCase();
-    if (!t || t === '100' || t === '100%') return null;
-    let m = t.match(/^(\d+)\s*[x×*]\s*(\d+)$/);
+    const raw = (text || '').trim().toLowerCase();
+    if (!raw || raw === '100' || raw === '100%') return null;
+    let m = raw.match(/^(\d+)\s*[x×*]\s*(\d+)$/);
     if (m) return { w: Number(m[1]), h: Number(m[2]) };
-    m = t.match(/^(\d+(?:\.\d+)?)\s*%$/);
+    m = raw.match(/^(\d+(?:\.\d+)?)\s*%$/);
     if (m) return { percent: Number(m[1]) };
     return 'invalid';
   }
 
   // 帧率解析：返回规范化的数字字符串；null=保持源帧率（默认）；'invalid'=无法识别
   function parseFps(text) {
-    const t = (text || '').trim();
-    if (!t) return null;
-    if (!/^\d+(\.\d+)?$/.test(t)) return 'invalid';
-    const fps = Number(t);
+    const raw = (text || '').trim();
+    if (!raw) return null;
+    if (!/^\d+(\.\d+)?$/.test(raw)) return 'invalid';
+    const fps = Number(raw);
     if (!isFinite(fps) || fps <= 0 || fps > 240) return 'invalid';
-    return t;
+    return raw;
   }
 
   function fillSelect(select, items) {
@@ -179,9 +182,14 @@
     for (const item of items) {
       const opt = document.createElement('option');
       opt.value = item.value;
-      opt.textContent = item.label;
+      opt.textContent = item.labelKey ? t(item.labelKey) : item.label;
       select.appendChild(opt);
     }
+  }
+
+  // 重建下拉后恢复原选择（语言切换会重填选项）
+  function restoreSelect(select, value) {
+    if (value && Array.from(select.options).some((opt) => opt.value === value)) select.value = value;
   }
 
   function baseName(p) {
@@ -193,7 +201,7 @@
     if (state.files.length === 0) {
       const li = document.createElement('li');
       li.className = 'file-list-empty';
-      li.textContent = '尚未添加文件，点击「添加文件」或将音视频文件拖拽到此处';
+      li.textContent = t('convert.fileEmpty');
       els.fileList.appendChild(li);
     } else {
       state.files.forEach((file, i) => {
@@ -214,7 +222,7 @@
         remove.className = 'file-remove';
         remove.type = 'button';
         remove.textContent = '×';
-        remove.title = '移除';
+        remove.title = t('convert.btnRemoveFile');
         remove.addEventListener('click', () => {
           if (state.running) return;
           state.files.splice(i, 1);
@@ -243,21 +251,26 @@
   }
 
   // ---------- 能力加载与选项生成 ----------
-  async function initCapabilities() {
-    let caps;
-    try {
-      caps = await window.ffgui.getCapabilities();
-    } catch (err) {
-      els.capsLoading.innerHTML = `<p>ffmpeg 能力检测失败：${String(err && err.message || err)}</p>`;
-      return;
-    }
+  let capsMeta = null; // 探测结果（语言切换时重建下拉与提示用）
+  let capsError = null; // 探测失败信息（语言切换时重刷提示）
 
-    const muxerNames = new Set(caps.muxers.map((m) => m.name));
-    const videoEnc = new Set(caps.encoders.video.map((e) => e.name));
-    // 试编码实测不可用的硬件编码器（驱动过旧等原因），不下拉展示
-    const brokenEnc = new Set(caps.encoders.video.filter((e) => e.broken).map((e) => e.name));
-    const audioEnc = new Set(caps.encoders.audio.map((e) => e.name));
+  function renderCapsError() {
+    // 保留 <p> 结构，译文只走 textContent
+    const p = document.createElement('p');
+    p.textContent = t('convert.capsFailed', { error: capsError });
+    els.capsLoading.replaceChildren(p);
+  }
 
+  // 按探测结果重建格式 / 编码器 / 硬件加速下拉，并保留当前选择
+  function renderCapabilityOptions() {
+    if (!capsMeta) return;
+    const { caps, muxerNames, videoEnc, audioEnc, brokenEnc } = capsMeta;
+    const keep = {
+      format: els.format.value,
+      vcodec: els.vcodec.value,
+      acodec: els.acodec.value,
+      hwaccel: els.hwaccel.value,
+    };
     // 只展示 ffmpeg 实际支持的选项（auto/copy/none 不依赖编码器，始终可用）
     const builtin = new Set(['auto', 'copy', 'none']);
     fillSelect(els.format, FORMATS.filter((f) => muxerNames.has(f.muxer)));
@@ -265,16 +278,47 @@
       builtin.has(c.value) || (videoEnc.has(c.value) && !brokenEnc.has(c.value))));
     fillSelect(els.acodec, ACODECS.filter((c) => builtin.has(c.value) || audioEnc.has(c.value)));
 
-    const hwItems = [{ value: '', label: '不使用' }, { value: 'auto', label: 'auto（自动选择）' }];
+    const hwItems = [{ value: '', labelKey: 'convert.hwaccelNone' },
+      { value: 'auto', labelKey: 'convert.hwaccelAuto' }];
     for (const name of caps.hwaccels) {
       if (name !== 'auto') hwItems.push({ value: name, label: name });
     }
     fillSelect(els.hwaccel, hwItems);
-    els.hwaccel.value = 'auto'; // 硬件加速（解码）默认 auto
 
-    els.capsInfo.textContent = `ffmpeg ${caps.version} ｜ 检测到 ${caps.hwaccels.length} 种硬件加速、`
-      + `${caps.encoders.video.length} 个视频编码器、${caps.encoders.audio.length} 个音频编码器`
-      + (brokenEnc.size > 0 ? ` ｜ 已剔除 ${brokenEnc.size} 个实测不可用的硬件编码器` : '');
+    restoreSelect(els.format, keep.format);
+    restoreSelect(els.vcodec, keep.vcodec);
+    restoreSelect(els.acodec, keep.acodec);
+    restoreSelect(els.hwaccel, keep.hwaccel);
+
+    els.capsInfo.textContent = t('convert.capsInfo', {
+      version: caps.version,
+      hw: caps.hwaccels.length,
+      venc: caps.encoders.video.length,
+      aenc: caps.encoders.audio.length,
+    }) + (brokenEnc.size > 0 ? t('convert.capsInfoBroken', { broken: brokenEnc.size }) : '');
+  }
+
+  async function initCapabilities() {
+    let caps;
+    try {
+      caps = await window.ffgui.getCapabilities();
+    } catch (err) {
+      capsError = String(err && err.message || err);
+      renderCapsError();
+      return;
+    }
+
+    capsMeta = {
+      caps,
+      muxerNames: new Set(caps.muxers.map((m) => m.name)),
+      videoEnc: new Set(caps.encoders.video.map((e) => e.name)),
+      // 试编码实测不可用的硬件编码器（驱动过旧等原因），不下拉展示
+      brokenEnc: new Set(caps.encoders.video.filter((e) => e.broken).map((e) => e.name)),
+      audioEnc: new Set(caps.encoders.audio.map((e) => e.name)),
+    };
+    const { muxerNames, videoEnc, audioEnc } = capsMeta;
+    renderCapabilityOptions();
+    els.hwaccel.value = 'auto'; // 硬件加速（解码）默认 auto
 
     els.capsLoading.classList.add('hidden');
     els.body.classList.remove('hidden');
@@ -314,73 +358,70 @@
   }
 
   // 预设表（与主进程 main/ffmpeg.js 的 DEVICE_PRESETS 同名表同步维护）：
-  // 选中预设时按表锁定并填写表单；tip 显示在预设下方，maxFps 用于帧率标签文案。
+  // 选中预设时按表锁定并填写表单；tipKey 指向词典（显示在预设下方），maxFps 用于帧率标签文案。
   const PRESET_BASE = { format: 'mp4', vcodec: 'libx264', acodec: 'aac', hwaccel: '',
     pixFmt: 'yuv420p', fps: '', vrateMode: 'vbr', channels: '2' };
   const DEVICE_PRESETS = {
     'ipod4-540': { ...PRESET_BASE, h264Profile: 'main', h264Level: '3.1', sampleRate: '48000',
-      vbitrate: '2000', abitrate: '128', scale: '960x540', maxFps: 30,
-      tip: 'iPod touch 4 / iOS 6：MP4 · H.264 Main 3.1 · 8-bit · 保持比例 · 最高 30 fps · AAC 双声道 128 kbps；默认第 1 音轨，可手动选轨。设备预设锁定兼容参数；其他机型请核对规格。10-bit 不一定是 HDR，色调映射需按源文件选择。' },
+      vbitrate: '2000', abitrate: '128', scale: '960x540', maxFps: 30, tipKey: 'convert.tipIpod' },
     'ipod4-720': { ...PRESET_BASE, h264Profile: 'main', h264Level: '3.1', sampleRate: '48000',
-      vbitrate: '2000', abitrate: '128', scale: '1280x720', maxFps: 30,
-      tip: 'iPod touch 4 / iOS 6：MP4 · H.264 Main 3.1 · 8-bit · 保持比例 · 最高 30 fps · AAC 双声道 128 kbps；默认第 1 音轨，可手动选轨。设备预设锁定兼容参数；其他机型请核对规格。10-bit 不一定是 HDR，色调映射需按源文件选择。' },
+      vbitrate: '2000', abitrate: '128', scale: '1280x720', maxFps: 30, tipKey: 'convert.tipIpod' },
     'bili-1080p': { ...PRESET_BASE, h264Profile: 'high', h264Level: '4.2', sampleRate: '48000',
-      vbitrate: '6000', abitrate: '320', scale: '1920x1080', maxFps: 60,
-      tip: 'B站 1080P 投稿：MP4 · H.264 High 4.2 · 保持比例 · 最高 60 fps · 均值 6000 kbps（峰值 12000）· AAC 320 kbps/48 kHz。均值 6000 kbps 为平台免二压上限；默认第 1 音轨，可手动选轨。' },
+      vbitrate: '6000', abitrate: '320', scale: '1920x1080', maxFps: 60, tipKey: 'convert.tipBili1080' },
     'bili-720p': { ...PRESET_BASE, h264Profile: 'high', h264Level: '3.1', sampleRate: '48000',
-      vbitrate: '3000', abitrate: '192', scale: '1280x720', maxFps: 30,
-      tip: 'B站 720P 投稿：MP4 · H.264 High 3.1 · 保持比例 · 最高 30 fps · 均值 3000 kbps（峰值 6000）· AAC 192 kbps/48 kHz；默认第 1 音轨，可手动选轨。' },
+      vbitrate: '3000', abitrate: '192', scale: '1280x720', maxFps: 30, tipKey: 'convert.tipBili720' },
     'douyin-1080p': { ...PRESET_BASE, h264Profile: 'high', h264Level: '4.2', sampleRate: '48000',
-      vbitrate: '6000', abitrate: '192', scale: '1920x1080', maxFps: 60,
-      tip: '抖音/快手 1080P：MP4 · H.264 High 4.2 · 保持比例 · 最高 60 fps · 均值 6000 kbps（峰值 12000）· AAC 192 kbps/48 kHz。平台建议码率 2–8 Mbps；竖屏源请确认比例。' },
+      vbitrate: '6000', abitrate: '192', scale: '1920x1080', maxFps: 60, tipKey: 'convert.tipDouyin1080' },
     'wechat-1080p': { ...PRESET_BASE, h264Profile: 'high', h264Level: '4.0', sampleRate: '48000',
-      vbitrate: '4000', abitrate: '128', scale: '1920x1080', maxFps: 30,
-      tip: '微信视频号 1080P：MP4 · H.264 High 4.0 · 保持比例 · 最高 30 fps · 均值 4000 kbps（峰值 8000）· AAC 128 kbps/48 kHz；默认第 1 音轨，可手动选轨。' },
+      vbitrate: '4000', abitrate: '128', scale: '1920x1080', maxFps: 30, tipKey: 'convert.tipWechat1080' },
     'youtube-1080p': { ...PRESET_BASE, h264Profile: 'high', h264Level: '4.2', sampleRate: '48000',
-      vbitrate: '8000', abitrate: '384', scale: '1920x1080', maxFps: 60,
-      tip: 'YouTube 1080P：MP4 · H.264 High 4.2 · 保持比例 · 最高 60 fps · 均值 8000 kbps（峰值 12000）· AAC 384 kbps/48 kHz。符合官方推荐上传编码（1080p30 8 Mbps / 1080p60 12 Mbps）。' },
+      vbitrate: '8000', abitrate: '384', scale: '1920x1080', maxFps: 60, tipKey: 'convert.tipYoutube1080' },
     'iphone4s': { ...PRESET_BASE, h264Profile: 'high', h264Level: '4.0', sampleRate: '48000',
-      vbitrate: '4000', abitrate: '160', scale: '1920x1080', maxFps: 30,
-      tip: 'iPhone 4S / iOS 6：MP4 · H.264 High 4.0 · 保持比例 · 最高 30 fps · 均值 4000 kbps（峰值 8000）· AAC 160 kbps/48 kHz。为 Apple 官方 1080p 播放上限（High ≤4.0、AAC-LC ≤160 kbps）；默认第 1 音轨，可手动选轨。' },
+      vbitrate: '4000', abitrate: '160', scale: '1920x1080', maxFps: 30, tipKey: 'convert.tipIphone4s' },
     'psp': { ...PRESET_BASE, h264Profile: 'main', h264Level: '2.2', sampleRate: '48000',
-      vbitrate: '1000', abitrate: '128', scale: '480x272', maxFps: 30,
-      tip: 'PSP：MP4 · H.264 Main 2.2 · 保持比例 · 480×272 · 最高 30 fps · 均值 1000 kbps（峰值 1500）· AAC 128 kbps/48 kHz；默认第 1 音轨，可手动选轨。' },
+      vbitrate: '1000', abitrate: '128', scale: '480x272', maxFps: 30, tipKey: 'convert.tipPsp' },
     'android-legacy': { ...PRESET_BASE, h264Profile: 'baseline', h264Level: '2.1', sampleRate: '44100',
-      vbitrate: '1000', abitrate: '128', scale: '800x480', maxFps: 30,
-      tip: '老款安卓（2.x 时代）：MP4 · H.264 Baseline 2.1 · 保持比例 · 800×480 · 最高 30 fps · 均值 1000 kbps（峰值 1500）· AAC 128 kbps/44.1 kHz；默认第 1 音轨，可手动选轨。' },
+      vbitrate: '1000', abitrate: '128', scale: '800x480', maxFps: 30, tipKey: 'convert.tipAndroidLegacy' },
     'web-safe': { ...PRESET_BASE, h264Profile: 'baseline', h264Level: '3.0', sampleRate: '44100',
-      vbitrate: '2500', abitrate: '128', scale: '1280x720', maxFps: 30,
-      tip: '最大兼容：MP4 · H.264 Baseline 3.0 · 保持比例 · 720p · 最高 30 fps · 均值 2500 kbps（峰值 5000）· AAC 128 kbps/44.1 kHz。适合网页嵌入与老旧播放设备；默认第 1 音轨，可手动选轨。' },
+      vbitrate: '2500', abitrate: '128', scale: '1280x720', maxFps: 30, tipKey: 'convert.tipWebSafe' },
     'tv-4k': { ...PRESET_BASE, h264Profile: 'high', h264Level: '5.1', sampleRate: '48000',
-      vbitrate: '20000', abitrate: '192', scale: '3840x2160', maxFps: 30,
-      tip: '4K 电视/盒子（兼 B站 4K 投稿）：MP4 · H.264 High 5.1 · 保持比例 · 2160p · 最高 30 fps · 均值 20000 kbps（峰值 40000）· AAC 192 kbps/48 kHz。B站 4K 免二压均值上限即 20000 kbps；默认第 1 音轨，可手动选轨。' },
+      vbitrate: '20000', abitrate: '192', scale: '3840x2160', maxFps: 30, tipKey: 'convert.tipTv4k' },
   };
 
   // 切换回自定义时恢复原设置，避免把预设参数误用于纯音频任务。
   const presetFields = ['format', 'vcodec', 'acodec', 'hwaccel', 'pixFmt', 'h264Profile',
     'h264Level', 'fps', 'channels', 'sampleRate', 'vbitrate', 'vrateMode', 'abitrate', 'scale'];
-  const defaultPresetTip = els.presetTip.textContent;
-  const defaultFpsLabel = els.fpsLabel.textContent;
   let customValues = null;
+
+  // 预设提示、帧率与音轨标签：预设态与自定义态文案不同，语言切换时也要重刷
+  function renderPresetLabels() {
+    const preset = els.devicePreset.value;
+    if (preset) {
+      const conf = DEVICE_PRESETS[preset];
+      els.presetTip.textContent = t(conf.tipKey);
+      els.fpsLabel.textContent = t('convert.labelFpsPreset', { fps: conf.maxFps });
+    } else {
+      els.presetTip.textContent = t('convert.presetTipDefault');
+      els.fpsLabel.textContent = t('convert.labelFps');
+    }
+    els.audioTrackLabel.textContent = preset ? t('convert.labelAudioTrackPreset') : t('convert.labelAudioTrack');
+  }
+
   function onPresetChange() {
     const preset = els.devicePreset.value;
     if (preset) {
       if (!customValues) customValues = Object.fromEntries(presetFields.map((key) => [key, els[key].value]));
       const conf = DEVICE_PRESETS[preset];
       presetFields.forEach((key) => { els[key].value = conf[key]; els[key].disabled = true; });
-      els.presetTip.textContent = conf.tip;
-      els.fpsLabel.textContent = `输出帧率（最高 ${conf.maxFps} fps，保留较低帧率）`;
     } else {
       presetFields.forEach((key) => {
         if (customValues) els[key].value = customValues[key];
         els[key].disabled = false;
       });
       customValues = null;
-      els.presetTip.textContent = defaultPresetTip;
-      els.fpsLabel.textContent = defaultFpsLabel;
     }
     els.presetTip.classList.toggle('hidden', !preset);
-    els.audioTrackLabel.textContent = preset ? '音轨序号（留空选择第 1 轨）' : '音轨序号（留空保留全部）';
+    renderPresetLabels();
     onFormatChange();
   }
 
@@ -413,7 +454,7 @@
     if (scaleVal === 'invalid') {
       els.advancedModal.classList.remove('hidden');
       els.scale.focus();
-      log('分辨率格式不正确，请使用 960x540 或 50%');
+      log(t('convert.logBadScale'));
       return;
     }
     const video = !AUDIO_ONLY.has(els.format.value) && els.vcodec.value !== 'none';
@@ -422,7 +463,7 @@
     if (fpsVal === 'invalid') {
       els.advancedModal.classList.remove('hidden');
       els.fps.focus();
-      log('帧率格式不正确，请输入 1–240 之间的数字（如 24、23.976），留空保持源帧率');
+      log(t('convert.logBadFps'));
       return;
     }
     const job = {
@@ -461,7 +502,7 @@
 
     const off = window.ffgui.onConvertEvent((evt) => {
       if (evt.type === 'file-start') {
-        setFileStatus(evt.index, '转换中…', 'running');
+        setFileStatus(evt.index, t('convert.statusConverting'), 'running');
         els.status.textContent = `(${evt.index + 1}/${state.files.length}) ${baseName(evt.input)}`;
       } else if (evt.type === 'progress') {
         els.progressBar.style.width = `${evt.percent}%`;
@@ -471,12 +512,12 @@
           + ` — ${evt.percent}%  ${formatSeconds(evt.time)}/${formatSeconds(evt.duration)}`
           + (evt.speed ? `  ${evt.speed}` : '');
       } else if (evt.type === 'file-done') {
-        setFileStatus(evt.index, '完成', 'done');
+        setFileStatus(evt.index, t('convert.statusDone'), 'done');
         log(`✔ ${baseName(evt.input)} → ${evt.output}`);
       } else if (evt.type === 'file-warning') {
         log(`⚠ ${baseName(evt.input)}：${evt.warning}`);
       } else if (evt.type === 'file-error') {
-        setFileStatus(evt.index, '失败', 'error');
+        setFileStatus(evt.index, t('convert.statusFailed'), 'error');
         log(`✘ ${baseName(evt.input)}：${evt.error}`);
       }
     });
@@ -485,11 +526,11 @@
       const result = await window.ffgui.convert(job);
       els.progressBar.style.width = result.done === result.total ? '100%' : els.progressBar.style.width;
       els.status.textContent = result.cancelled
-        ? `已取消（完成 ${result.done}/${result.total}）`
-        : `全部结束：成功 ${result.done}/${result.total}`;
+        ? t('convert.statusCancelled', { done: result.done, total: result.total })
+        : t('convert.statusAllDone', { done: result.done, total: result.total });
     } catch (err) {
-      log(`转换失败：${String(err && err.message || err)}`);
-      els.status.textContent = '转换失败';
+      log(t('convert.logConvertFailed', { error: String(err && err.message || err) }));
+      els.status.textContent = t('convert.statusConvertFailed');
     } finally {
       off();
       setRunning(false);
@@ -538,7 +579,7 @@
   els.start.addEventListener('click', startConvert);
   els.cancel.addEventListener('click', () => {
     window.ffgui.cancelConvert();
-    els.status.textContent = '正在取消…';
+    els.status.textContent = t('convert.statusCancelling');
   });
 
   // ---------- 拖拽添加文件 ----------
@@ -574,11 +615,24 @@
     }
     const added = addFiles(paths);
     if (skipped > 0) {
-      log(`已忽略 ${skipped} 个不支持的文件`);
+      log(t('convert.logSkipped', { count: skipped }));
     }
     if (added > 0) {
-      els.status.textContent = `已添加 ${added} 个文件`;
+      els.status.textContent = t('convert.statusAdded', { count: added });
     }
+  });
+
+  // 语言切换：静态文案由 data-i18n 自动刷新；下拉选项、能力提示、预设提示与文件列表
+  // 都是脚本生成的，需要按新词典重建（保留用户当前选择）
+  window.i18n.onChange(() => {
+    if (capsError) {
+      renderCapsError();
+      return;
+    }
+    renderCapabilityOptions();
+    renderPresetLabels();
+    // 运行中不重建文件列表：会丢掉各文件的实时状态（进度/完成/失败）
+    if (!state.running) renderFileList();
   });
 
   initCapabilities();

@@ -1,5 +1,15 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
+// 界面语言：同步取一次主进程状态（设置值 + 生效语言 + 词典），
+// 页面脚本解析时即可用，英文界面首帧不会闪中文；主进程未就绪时按中文空词典兜底
+let i18nBoot = { setting: 'system', lang: 'zh-CN', dict: {}, fallback: {}, available: ['zh-CN'] };
+try {
+  const boot = ipcRenderer.sendSync('ffgui:i18n-sync');
+  if (boot && boot.dict) i18nBoot = boot;
+} catch (err) {
+  console.error('[ffgui] 读取界面语言失败，按中文显示:', err);
+}
+
 // 向渲染进程暴露的受限 API
 contextBridge.exposeInMainWorld('ffgui', {
   platform: process.platform,
@@ -85,5 +95,14 @@ contextBridge.exposeInMainWorld('ffgui', {
     const listener = (_event, theme) => callback(theme);
     ipcRenderer.on('ffgui:theme-changed', listener);
     return () => ipcRenderer.removeListener('ffgui:theme-changed', listener);
+  },
+
+  // 界面语言（跟随系统 / zh-CN / zh-TW / en / ja / ko）：词典随事件一起下发
+  i18n: i18nBoot,
+  setLanguage: (value) => ipcRenderer.send('ffgui:language-set', value),
+  onLanguageChanged: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('ffgui:language-changed', listener);
+    return () => ipcRenderer.removeListener('ffgui:language-changed', listener);
   },
 });

@@ -4,6 +4,8 @@
 // 浏览器放不了的格式会先生成一份低画质预览副本用于播放与画框，
 // 预览副本与原片时间轴 1:1 对齐，最终转换始终使用原文件
 (function () {
+  const t = window.i18n.t;
+
   // 与主进程文件选择对话框保持一致的媒体扩展名
   const MEDIA_EXTS = new Set(['mp4', 'mkv', 'avi', 'mov', 'flv', 'wmv', 'webm', 'ts', 'm4v',
     'mp3', 'aac', 'flac', 'wav', 'ogg', 'm4a', 'wma']);
@@ -205,7 +207,7 @@
   function updateReadout() {
     const c = state.crop;
     if (!c) {
-      els.readout.textContent = '尚未选择裁剪区域';
+      els.readout.textContent = t('crop.readoutEmpty');
       els.clearCrop.disabled = true;
       return;
     }
@@ -213,13 +215,23 @@
     // 只显示相对画面的百分比：probe 的宽高是 coded 尺寸，
     // 旋转 90° 或 SAR 非 1 时会与实际显示画面不符，像素估算会误导
     const pct = (v) => `${(v * 100).toFixed(1)}%`;
-    els.readout.textContent = `X ${pct(c.x)} · Y ${pct(c.y)} · 宽 ${pct(c.w)} · 高 ${pct(c.h)}`;
+    els.readout.textContent = t('crop.readoutFmt', {
+      x: pct(c.x), y: pct(c.y), w: pct(c.w), h: pct(c.h),
+    });
+  }
+
+  function updateDrawLabel() {
+    els.draw.textContent = state.drawing ? t('crop.btnStopDraw') : t('crop.btnDraw');
+  }
+
+  function updatePlayLabel() {
+    els.play.textContent = els.video.paused ? t('crop.btnPlay') : t('crop.btnPause');
   }
 
   function setDrawing(on) {
     state.drawing = on;
     els.draw.classList.toggle('btn-active', on);
-    els.draw.textContent = on ? '停止绘制' : '绘制裁剪框';
+    updateDrawLabel();
     els.hint.classList.toggle('hidden', !on || !!state.crop);
     els.canvas.classList.toggle('drawing', on);
     // 画框模式下播放控件交给画面，暂停后才允许画框
@@ -277,13 +289,13 @@
     togglePlay();
   });
   els.video.addEventListener('play', () => {
-    els.play.textContent = '暂停';
+    updatePlayLabel();
     // 播放中不允许画框：自动退出绘制模式并保留已有选框
     if (state.drawing) setDrawing(false);
     updateDrawButton();
   });
   els.video.addEventListener('pause', () => {
-    els.play.textContent = '播放';
+    updatePlayLabel();
     updateDrawButton();
   });
   els.video.addEventListener('timeupdate', () => {
@@ -399,11 +411,11 @@
     if (ticket !== state.loading) return; // 期间又加载了别的文件
     const p = probes[0];
     if (!p || (!p.hasVideo && !p.hasAudio)) {
-      log(`✘ 无法识别的文件（无音视频流）：${baseName(filePath)}`);
+      log(t('crop.logUnrecognized', { name: baseName(filePath) }));
       return;
     }
     if (!p.hasVideo) {
-      log(`✘ 该文件没有视频画面，无法裁剪：${baseName(filePath)}`);
+      log(t('crop.logNoVideo', { name: baseName(filePath) }));
       return;
     }
 
@@ -425,7 +437,7 @@
     els.fileInfo.classList.remove('hidden');
     els.fileName.textContent = baseName(filePath);
     els.fileName.title = filePath;
-    const size = p.width && p.height ? `${p.width}×${p.height}` : '未知分辨率';
+    const size = p.width && p.height ? `${p.width}×${p.height}` : t('crop.unknownResolution');
     els.fileMeta.textContent = `[${formatTime(state.duration)} · ${size}]`;
     els.playerPanel.classList.remove('hidden');
     els.outputPanel.classList.remove('hidden');
@@ -443,7 +455,7 @@
     if (!state.file || state.busy || !els.video.getAttribute('src')) return;
     if (state.playable) return; // 播放中途的异常不重复触发
     if (state.usingPreview) {
-      showOverlay('预览生成后仍无法播放该文件');
+      showOverlay(t('crop.overlayPreviewUnplayable'));
       return;
     }
     makePreview(state.loading);
@@ -452,13 +464,13 @@
   async function makePreview(ticket) {
     setBusy(true);
     els.progressBar.style.setProperty('--progress-width', '0%');
-    showOverlay('该格式浏览器无法直接播放，正在生成低画质预览…');
-    els.status.textContent = '正在生成预览…';
+    showOverlay(t('crop.overlayPreviewGenerating'));
+    els.status.textContent = t('crop.statusPreview');
 
     const off = window.ffgui.onConvertEvent((evt) => {
       if (evt.type === 'progress') {
         els.progressBar.style.setProperty('--progress-width', `${evt.percent}%`);
-        els.status.textContent = `正在生成预览… ${evt.percent}%`
+        els.status.textContent = t('crop.statusPreviewProgress', { percent: evt.percent })
           + (evt.speed ? `  ${evt.speed}` : '');
       }
     });
@@ -475,15 +487,15 @@
         state.usingPreview = true;
         els.previewTag.classList.remove('hidden');
         els.progressBar.style.setProperty('--progress-width', '100%');
-        els.status.textContent = '预览已生成（低画质，不影响输出）';
+        els.status.textContent = t('crop.statusPreviewDone');
         els.video.src = window.ffgui.pathToFileUrl(res.output);
       } else {
-        showOverlay(res.cancelled ? '已取消预览生成' : '预览生成失败，该文件无法预览');
-        els.status.textContent = res.cancelled ? '已取消' : '预览生成失败';
+        showOverlay(res.cancelled ? t('crop.overlayPreviewCancelled') : t('crop.overlayPreviewFailed'));
+        els.status.textContent = res.cancelled ? t('crop.statusCancelled') : t('crop.statusPreviewFailed');
       }
     } catch (err) {
-      showOverlay('预览生成失败，该文件无法预览');
-      log(`✘ 预览生成失败：${String(err && err.message || err)}`);
+      showOverlay(t('crop.overlayPreviewFailed'));
+      log(t('crop.logPreviewFailed', { err: String(err && err.message || err) }));
     } finally {
       off();
       if (ticket === state.loading) setBusy(false);
@@ -544,14 +556,17 @@
         els.status.textContent = `(${evt.index + 1}/1) ${baseName(evt.input)}`;
       } else if (evt.type === 'progress') {
         els.progressBar.style.setProperty('--progress-width', `${evt.percent}%`);
-        els.status.textContent = `裁剪转换中… ${evt.percent}%  ${formatTime(evt.time)}/${formatTime(evt.duration)}`
-          + (evt.speed ? `  ${evt.speed}` : '');
+        els.status.textContent = t('crop.statusConverting', {
+          percent: evt.percent,
+          time: formatTime(evt.time),
+          duration: formatTime(evt.duration),
+        }) + (evt.speed ? `  ${evt.speed}` : '');
       } else if (evt.type === 'file-done') {
-        log(`✔ 裁剪完成 → ${evt.output}`);
+        log(t('crop.logDone', { output: evt.output }));
       } else if (evt.type === 'file-warning') {
-        log(`⚠ ${baseName(evt.input)}：${evt.warning}`);
+        log(t('crop.logWarning', { name: baseName(evt.input), text: evt.warning }));
       } else if (evt.type === 'file-error') {
-        log(`✘ ${baseName(evt.input)}：${evt.error}`);
+        log(t('crop.logError', { name: baseName(evt.input), text: evt.error }));
       }
     });
 
@@ -560,11 +575,11 @@
       const current = els.progressBar.style.getPropertyValue('--progress-width');
       els.progressBar.style.setProperty('--progress-width', result.done === result.total ? '100%' : current);
       els.status.textContent = result.cancelled
-        ? '已取消'
-        : (result.done === result.total ? '裁剪完成' : '裁剪失败，详见日志');
+        ? t('crop.statusCancelled')
+        : (result.done === result.total ? t('crop.statusDone') : t('crop.statusFailedSeeLog'));
     } catch (err) {
-      log(`✘ 裁剪失败：${String(err && err.message || err)}`);
-      els.status.textContent = '裁剪失败';
+      log(t('crop.logFailed', { err: String(err && err.message || err) }));
+      els.status.textContent = t('crop.statusFailed');
     } finally {
       off();
       setBusy(false);
@@ -587,7 +602,7 @@
   els.start.addEventListener('click', startConvert);
   els.cancel.addEventListener('click', () => {
     window.ffgui.cancelConvert();
-    els.status.textContent = '正在取消…';
+    els.status.textContent = t('crop.statusCancelling');
   });
 
   // 快捷键：空格=播放/暂停，Esc=清除选框
@@ -642,6 +657,19 @@
         return; // 只取第一个可用文件
       }
     }
-    log('✘ 未找到可用的音视频文件');
+    log(t('crop.logNoMediaFile'));
   });
+
+  // ---------- 语言切换：重刷本页生成的动态文案 ----------
+  // 静态标注由 i18n.js 的 applyStatic 处理；这里补画框读数、按钮标签与播放态
+  window.i18n.onChange(() => {
+    updateReadout();
+    updateDrawLabel();
+    updatePlayLabel();
+  });
+
+  // 初始文案（结构上等同 HTML 里的中文默认值，仅随语言变化）
+  updateReadout();
+  updateDrawLabel();
+  updatePlayLabel();
 })();

@@ -29,9 +29,9 @@ ShowInstDetails show
 !define MUI_ABORTWARNING
 !define MUI_ICON "${ICON_FILE}"
 !define MUI_UNICON "${ICON_FILE}"
-; 完成页提供“运行应用”复选框
+; 完成页提供“运行应用”复选框（文案按语言，见下方 LangString）
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
-!define MUI_FINISHPAGE_RUN_TEXT "${RUN_TEXT}"
+!define MUI_FINISHPAGE_RUN_TEXT "$(RUN_TEXT)"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${LICENSE_FILE}"
@@ -42,11 +42,48 @@ ShowInstDetails show
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 
-; 默认简体中文，备选英文（MUI_LANGUAGE 必须最后插入）
+; ---- 语言：NSIS 默认按系统显示语言自动选择（$LANGUAGE 初始值），
+;      系统语言不在列表里时用**第一个**插入的语言，故 English 放在最前 = 兜底英文。
+;      MUI_LANGUAGE 必须最后插入（在所有页面宏之后）。 ----
+!insertmacro MUI_LANGUAGE "English"      ; 兜底：非中文/日/韩系统显示英文
 !insertmacro MUI_LANGUAGE "SimpChinese"
-!insertmacro MUI_LANGUAGE "English"
+!insertmacro MUI_LANGUAGE "TradChinese"
+!insertmacro MUI_LANGUAGE "Japanese"
+!insertmacro MUI_LANGUAGE "Korean"
 
-BrandingText "${BRANDING_TEXT}"
+; ---- 自定义文案（MUI 自带的按钮/页面文字由语言文件本地化，无需在此重复） ----
+; 产品名（${APP_NAME}）是品牌名，各语言保持一致，安装目录与快捷方式因此不随语言变化
+LangString SECTION_MAIN   ${LANG_ENGLISH}    "Main program"
+LangString SECTION_MAIN   ${LANG_SIMPCHINESE} "主程序"
+LangString SECTION_MAIN   ${LANG_TRADCHINESE} "主程式"
+LangString SECTION_MAIN   ${LANG_JAPANESE}    "メインプログラム"
+LangString SECTION_MAIN   ${LANG_KOREAN}      "주 프로그램"
+
+LangString SECTION_UNINST ${LANG_ENGLISH}    "Uninstall"
+LangString SECTION_UNINST ${LANG_SIMPCHINESE} "卸载"
+LangString SECTION_UNINST ${LANG_TRADCHINESE} "解除安裝"
+LangString SECTION_UNINST ${LANG_JAPANESE}    "アンインストール"
+LangString SECTION_UNINST ${LANG_KOREAN}      "제거"
+
+LangString RUN_TEXT       ${LANG_ENGLISH}    "Run ${APP_NAME}"
+LangString RUN_TEXT       ${LANG_SIMPCHINESE} "运行 ${APP_NAME}"
+LangString RUN_TEXT       ${LANG_TRADCHINESE} "執行 ${APP_NAME}"
+LangString RUN_TEXT       ${LANG_JAPANESE}    "${APP_NAME} を起動"
+LangString RUN_TEXT       ${LANG_KOREAN}      "${APP_NAME} 실행"
+
+LangString UNINSTALL_LNK  ${LANG_ENGLISH}    "Uninstall ${APP_NAME}"
+LangString UNINSTALL_LNK  ${LANG_SIMPCHINESE} "卸载${APP_NAME}"
+LangString UNINSTALL_LNK  ${LANG_TRADCHINESE} "解除安裝${APP_NAME}"
+LangString UNINSTALL_LNK  ${LANG_JAPANESE}    "${APP_NAME} をアンインストール"
+LangString UNINSTALL_LNK  ${LANG_KOREAN}      "${APP_NAME} 제거"
+
+LangString BRANDING_TEXT  ${LANG_ENGLISH}    "${APP_NAME} ${APP_VERSION} Setup"
+LangString BRANDING_TEXT  ${LANG_SIMPCHINESE} "${APP_NAME} ${APP_VERSION} 安装程序"
+LangString BRANDING_TEXT  ${LANG_TRADCHINESE} "${APP_NAME} ${APP_VERSION} 安裝程式"
+LangString BRANDING_TEXT  ${LANG_JAPANESE}    "${APP_NAME} ${APP_VERSION} セットアップ"
+LangString BRANDING_TEXT  ${LANG_KOREAN}      "${APP_NAME} ${APP_VERSION} 설치 프로그램"
+
+BrandingText "$(BRANDING_TEXT)"
 
 ; ---- 安装包 exe 自身版本信息 ----
 VIProductVersion ${VI_VERSION}
@@ -58,7 +95,7 @@ VIAddVersionKey "LegalCopyright" "${LEGAL_COPYRIGHT}"
 VIAddVersionKey "OriginalFilename" "${ORIGINAL_FILENAME}"
 
 ; =============================================================
-Section "${SECTION_NAME}" SEC_INSTALL
+Section "$(SECTION_MAIN)" SEC_INSTALL
   SectionIn RO
 
   ; 安装前先结束正在运行的旧版本进程，避免文件占用导致升级失败
@@ -73,7 +110,7 @@ Section "${SECTION_NAME}" SEC_INSTALL
   ; 开始菜单快捷方式（含卸载入口）
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
   CreateShortcut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
-  CreateShortcut "$SMPROGRAMS\${APP_NAME}\${UNINSTALL_LNK}.lnk" "$INSTDIR\${UNINSTALL_EXE}"
+  CreateShortcut "$SMPROGRAMS\${APP_NAME}\$(UNINSTALL_LNK).lnk" "$INSTDIR\${UNINSTALL_EXE}"
   ; 桌面快捷方式
   CreateShortcut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
 
@@ -93,7 +130,7 @@ Section "${SECTION_NAME}" SEC_INSTALL
 SectionEnd
 
 ; =============================================================
-Section "Uninstall"
+Section "$(SECTION_UNINST)"
   ; 先结束正在运行的应用进程，否则 FFGui.exe 被占用会导致删除失败、目录残留
   nsExec::Exec "taskkill /F /IM ${APP_EXE} /T"
   Pop $0

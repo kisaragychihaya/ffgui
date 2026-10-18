@@ -561,7 +561,10 @@ test('FFmpeg 参数仅对内部 preserveChapters=true 映射章节，并导出�
   const source = fs.readFileSync(path.join(repo, 'main/ffmpeg.js'), 'utf8');
   const ctx = {
     require: (name) => name === 'electron'
-      ? { app: { isPackaged: false, getAppPath: () => repo } } : require(name),
+      ? { app: { isPackaged: false, getAppPath: () => repo } }
+      // 主进程文案走 locales/<lng>.json；vm 沙箱里的相对 require 需按仓库根解析
+      : name === './i18n' ? require(path.join(repo, 'main', 'i18n.js'))
+        : require(name),
     process,
     console: { log() {} },
     module: { exports: {} },

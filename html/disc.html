@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-i18n-title="disc.title">
 <head>
   <meta charset="UTF-8" />
   <!-- 本页不预览任何本地媒体，故不放行 media-src / img-src -->
@@ -13,101 +13,102 @@
 <body>
   <main class="view disc-view">
     <header class="feature-header">
-      <button id="btn-back" class="btn-back" type="button">← 返回首页</button>
-      <h2>光盘抓取</h2>
+      <button id="btn-back" class="btn-back" type="button" data-i18n="common.backHome">← 返回首页</button>
+      <h2 data-i18n="disc.heading">光盘抓取</h2>
     </header>
 
     <!-- 来源：ISO 镜像 / 已提取目录 / 物理光驱 -->
     <section class="panel" id="source-panel">
       <div class="panel-header">
-        <h3>光盘来源</h3>
+        <h3 data-i18n="disc.secSource">光盘来源</h3>
         <div class="panel-actions">
-          <button id="btn-probe" class="btn btn-primary" type="button" disabled>开始探测</button>
+          <button id="btn-probe" class="btn btn-primary" type="button" data-i18n="disc.btnProbe" disabled>开始探测</button>
         </div>
       </div>
       <div class="disc-source-row">
-        <button id="btn-pick-iso" class="btn" type="button">选择 ISO 镜像…</button>
-        <button id="btn-pick-folder" class="btn" type="button">选择已提取目录…</button>
+        <button id="btn-pick-iso" class="btn" type="button" data-i18n="disc.btnPickIso">选择 ISO 镜像…</button>
+        <button id="btn-pick-folder" class="btn" type="button" data-i18n="disc.btnPickFolder">选择已提取目录…</button>
         <span id="drive-wrap" class="disc-drive">
-          <label for="sel-drive">物理光驱</label>
+          <label for="sel-drive" data-i18n="disc.lblDrive">物理光驱</label>
           <select id="sel-drive" disabled></select>
         </span>
-        <button id="btn-refresh-drives" class="btn" type="button" title="重新枚举光驱">刷新光驱</button>
+        <button id="btn-refresh-drives" class="btn" type="button" title="重新枚举光驱"
+                data-i18n="disc.btnRefreshDrives" data-i18n-attr="title:disc.tipRefreshDrives">刷新光驱</button>
       </div>
       <p id="drive-hint" class="caps-info">正在枚举物理光驱…</p>
       <div class="disc-source-current">
         <span id="source-name" class="disc-source-name">尚未选择来源</span>
-        <button id="btn-clear-source" class="btn btn-plain hidden" type="button">清除来源</button>
+        <button id="btn-clear-source" class="btn btn-plain hidden" type="button" data-i18n="disc.btnClearSource">清除来源</button>
       </div>
       <label class="form-item disc-keydb-item">
-        <span class="form-label">解密密钥库（可选，加密光盘需要，如 KEYDB.cfg）</span>
+        <span class="form-label" data-i18n="disc.lblKeydb">解密密钥库（可选，加密光盘需要，如 KEYDB.cfg）</span>
         <span class="dir-picker">
-          <input id="input-keydb" type="text" readonly placeholder="未选择" />
-          <button id="btn-pick-keydb" class="btn" type="button">选择密钥库…</button>
-          <button id="btn-clear-keydb" class="btn btn-plain hidden" type="button">移除</button>
+          <input id="input-keydb" type="text" readonly placeholder="未选择" data-i18n-attr="placeholder:disc.phKeydbNone" />
+          <button id="btn-pick-keydb" class="btn" type="button" data-i18n="disc.btnPickKeydb">选择密钥库…</button>
+          <button id="btn-clear-keydb" class="btn btn-plain hidden" type="button" data-i18n="disc.btnClearKeydb">移除</button>
         </span>
       </label>
-      <p class="caps-info">支持 Blu-ray / DVD 光盘结构的 ISO 镜像，或已提取到磁盘的目录（含 BDMV / CERTIFICATE 或 VIDEO_TS 的文件夹）。</p>
+      <p class="caps-info" data-i18n="disc.hintSourceSupport">支持 Blu-ray / DVD 光盘结构的 ISO 镜像，或已提取到磁盘的目录（含 BDMV / CERTIFICATE 或 VIDEO_TS 的文件夹）。</p>
     </section>
 
     <!-- 标题列表 -->
     <section class="panel hidden" id="titles-panel">
       <div class="panel-header">
-        <h3>标题列表</h3>
+        <h3 data-i18n="disc.secTitles">标题列表</h3>
         <div class="panel-actions">
-          <button id="btn-select-longest" class="btn" type="button">只选最长标题</button>
-          <button id="btn-select-all-titles" class="btn" type="button">全选标题</button>
-          <button id="btn-select-none-titles" class="btn" type="button">全不选标题</button>
+          <button id="btn-select-longest" class="btn" type="button" data-i18n="disc.btnSelectLongest">只选最长标题</button>
+          <button id="btn-select-all-titles" class="btn" type="button" data-i18n="disc.btnSelectAllTitles">全选标题</button>
+          <button id="btn-select-none-titles" class="btn" type="button" data-i18n="disc.btnSelectNoneTitles">全不选标题</button>
         </div>
       </div>
       <div id="disc-meta" class="disc-meta"></div>
       <ul id="title-list" class="disc-title-list"></ul>
-      <p class="caps-info">默认只勾选最长的标题（通常是正片），可自行多选。每个标题可单独挑选要保留的音轨与字幕：「全部」保留所有轨，「全不」一条都不保留，也可逐项勾选。</p>
+      <p class="caps-info" data-i18n="disc.hintTitles">默认只勾选最长的标题（通常是正片），可自行多选。每个标题可单独挑选要保留的音轨与字幕：「全部」保留所有轨，「全不」一条都不保留，也可逐项勾选。</p>
     </section>
 
     <!-- 输出设置 -->
     <section class="panel hidden" id="output-panel">
-      <div class="panel-header"><h3>输出设置</h3></div>
+      <div class="panel-header"><h3 data-i18n="disc.secOutput">输出设置</h3></div>
       <div class="form-grid settings-grid">
         <label class="form-item">
-          <span class="form-label">输出方式</span>
+          <span class="form-label" data-i18n="disc.lblMode">输出方式</span>
           <select id="sel-mode">
-            <option value="copy">无损 MKV（复制视频流，最快）</option>
-            <option value="transcode" selected>转码（重新编码）</option>
+            <option value="copy" data-i18n="disc.modeCopy">无损 MKV（复制视频流，最快）</option>
+            <option value="transcode" selected data-i18n="disc.modeTranscode">转码（重新编码）</option>
           </select>
         </label>
         <label class="form-item">
-          <span class="form-label">输出格式</span>
+          <span class="form-label" data-i18n="disc.lblFormat">输出格式</span>
           <select id="sel-format"></select>
         </label>
         <label class="form-item hidden" id="item-quality">
-          <span class="form-label">画质</span>
+          <span class="form-label" data-i18n="disc.lblQuality">画质</span>
           <select id="sel-quality">
-            <option value="high">高</option>
-            <option value="medium" selected>标准</option>
-            <option value="low">小体积</option>
+            <option value="high" data-i18n="disc.qualityHigh">高</option>
+            <option value="medium" selected data-i18n="disc.qualityMedium">标准</option>
+            <option value="low" data-i18n="disc.qualityLow">小体积</option>
           </select>
         </label>
         <label class="form-item" id="item-audio-codec">
-          <span class="form-label">音频编码</span>
+          <span class="form-label" data-i18n="disc.lblAudioCodec">音频编码</span>
           <select id="sel-audio-codec"></select>
         </label>
         <label class="form-item form-item-dir">
-          <span class="form-label">输出目录</span>
+          <span class="form-label" data-i18n="disc.lblOutputDir">输出目录</span>
           <span class="dir-picker">
-            <input id="input-outdir" type="text" readonly placeholder="请选择输出目录" />
-            <button id="btn-pick-dir" class="btn" type="button">浏览…</button>
+            <input id="input-outdir" type="text" readonly placeholder="请选择输出目录" data-i18n-attr="placeholder:disc.phOutputDir" />
+            <button id="btn-pick-dir" class="btn" type="button" data-i18n="disc.btnBrowse">浏览…</button>
           </span>
         </label>
       </div>
-      <p class="caps-info">「无损 MKV」直接复制视频流，速度最快且画质无损，仅支持 MKV；「转码 MKV」重新编码，字幕可保留；「转码 MP4」兼容性最好，但当前实现不保留任何字幕：PGS / VobSub 图像字幕与文字字幕都不会写入，需将每个勾选标题的字幕设为「全不」。</p>
+      <p class="caps-info" data-i18n="disc.hintOutput">「无损 MKV」直接复制视频流，速度最快且画质无损，仅支持 MKV；「转码 MKV」重新编码，字幕可保留；「转码 MP4」兼容性最好，但当前实现不保留任何字幕：PGS / VobSub 图像字幕与文字字幕都不会写入，需将每个勾选标题的字幕设为「全不」。</p>
     </section>
 
     <!-- 进度与操作 -->
     <section class="panel hidden" id="action-panel">
       <div class="convert-actions">
-        <button id="btn-start" class="btn btn-primary" type="button" disabled>开始抓取</button>
-        <button id="btn-cancel" class="btn btn-danger hidden" type="button">取消</button>
+        <button id="btn-start" class="btn btn-primary" type="button" data-i18n="disc.btnStart" disabled>开始抓取</button>
+        <button id="btn-cancel" class="btn btn-danger hidden" type="button" data-i18n="common.cancel">取消</button>
         <span id="status-text" class="status-text"></span>
       </div>
       <p id="start-hint" class="caps-info"></p>
@@ -118,6 +119,7 @@
     </section>
   </main>
 
+  <script src="js/i18n.js"></script>
   <script src="js/theme.js"></script>
   <script src="js/disc.js"></script>
 </body>

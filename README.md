@@ -1,6 +1,7 @@
 # FFGui
 
-基于 Electron + FFmpeg 的桌面音视频工具箱（GUI for FFmpeg），界面语言为简体中文。
+基于 Electron + FFmpeg 的桌面音视频工具箱（GUI for FFmpeg），界面支持简体中文 / 繁體中文 /
+English / 日本語 / 한국어（默认跟随系统，可在右上角切换）。
 
 ## 功能
 

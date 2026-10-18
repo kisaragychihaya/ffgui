@@ -103,7 +103,8 @@ function build({ appDir, outDir, arch }) {
   const suffix = arch === 'arm64' ? '-arm64' : '-x64';
   const outFile = path.join(outDir, `FFGui-${version}${suffix}-Setup.exe`);
 
-  // 中文产品名等含非 ASCII 字符，写入 defines.nsh 时带 UTF-8 BOM（NSIS Unicode 解析需要）
+  // 中文产品名等含非 ASCII 字符，写入 defines.nsh 时带 UTF-8 BOM（NSIS Unicode 解析需要）。
+  // 界面文案（主程序/卸载/运行/品牌行）已改为 installer.nsi 里的 LangString，按语言自动选择
   const defines = [
     `!define APP_NAME "${APP_NAME}"`,
     `!define APP_ID "${APP_ID}"`,
@@ -116,11 +117,8 @@ function build({ appDir, outDir, arch }) {
     `!define LICENSE_FILE "${toNsisPath(licenseFile)}"`,
     `!define ICON_FILE "${toNsisPath(iconFile)}"`,
     `!define UNINSTALL_EXE "uninstall.exe"`,
-    `!define UNINSTALL_LNK "卸载${APP_NAME}"`,
-    `!define SECTION_NAME "主程序"`,
-    `!define RUN_TEXT "运行 ${APP_NAME}"`,
-    `!define BRANDING_TEXT "${APP_NAME} ${version} 安装程序"`,
-    `!define FILE_DESCRIPTION "${APP_NAME}（FFGui）安装程序"`,
+    // 版本信息里只有一份字符串（无法按语言本地化），用中英混排兼顾
+    `!define FILE_DESCRIPTION "${APP_NAME} (FFGui) Setup"`,
     `!define LEGAL_COPYRIGHT "Copyright (C) ${new Date().getFullYear()} ${PUBLISHER} · LGPL-3.0-or-later"`,
     `!define ORIGINAL_FILENAME "${path.basename(outFile)}"`,
     `!define VI_VERSION "${makeViVersion(version)}"`,

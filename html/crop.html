@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-i18n-title="crop.title">
 <head>
   <meta charset="UTF-8" />
   <!-- 媒体源放行 file:/blob:，用于 <video> 播放本地音视频（与截取页一致） -->
@@ -12,24 +12,24 @@
 <body>
   <main class="view crop-view">
     <header class="feature-header">
-      <button id="btn-back" class="btn-back" type="button">← 返回首页</button>
-      <h2>画面裁剪</h2>
+      <button id="btn-back" class="btn-back" type="button" data-i18n="common.backHome">← 返回首页</button>
+      <h2 data-i18n="crop.heading">画面裁剪</h2>
     </header>
 
     <!-- 文件区（支持拖拽） -->
     <section class="panel" id="file-panel">
       <div class="panel-header">
-        <h3>源文件</h3>
+        <h3 data-i18n="crop.secSource">源文件</h3>
         <div class="panel-actions">
-          <button id="btn-pick-file" class="btn" type="button">选择文件</button>
+          <button id="btn-pick-file" class="btn" type="button" data-i18n="crop.btnPickFile">选择文件</button>
         </div>
       </div>
       <div id="file-drop" class="clip-drop">
-        <p>请把视频文件拖放到这里！（仅支持含视频画面的文件）</p>
+        <p data-i18n="crop.dropHint">请把视频文件拖放到这里！（仅支持含视频画面的文件）</p>
       </div>
       <div id="file-info" class="clip-file-info hidden">
         <span id="file-name" class="file-name"></span>
-        <span id="preview-tag" class="file-badge badge-video hidden">低画质预览（不影响输出）</span>
+        <span id="preview-tag" class="file-badge badge-video hidden" data-i18n="crop.previewTag">低画质预览（不影响输出）</span>
         <span id="file-meta" class="file-status"></span>
       </div>
     </section>
@@ -40,54 +40,56 @@
       <div class="crop-stage" id="crop-stage">
         <video id="video" playsinline></video>
         <canvas id="crop-canvas" class="hidden"></canvas>
-        <div id="crop-hint" class="crop-hint hidden">在画面上按住拖动，框选要保留的区域</div>
+        <div id="crop-hint" class="crop-hint hidden" data-i18n="crop.canvasHint">在画面上按住拖动，框选要保留的区域</div>
         <div id="player-overlay" class="clip-player-overlay hidden"></div>
       </div>
       <div class="clip-controls">
-        <button id="btn-play" class="btn" type="button">播放</button>
+        <button id="btn-play" class="btn" type="button" data-i18n="crop.btnPlay">播放</button>
         <span id="time-cur" class="clip-time">0:00:00</span>
         <input id="seek-bar" class="clip-seek" type="range" min="0" max="0" step="0.001" value="0" />
         <span id="time-total" class="clip-time">0:00:00</span>
-        <input id="volume" class="clip-volume" type="range" min="0" max="1" step="0.05" value="1" title="音量" />
+        <input id="volume" class="clip-volume" type="range" min="0" max="1" step="0.05" value="1" title="音量"
+               data-i18n-attr="title:crop.volumeTitle" />
       </div>
 
       <!-- 裁剪框操作与读数 -->
       <div class="crop-tool-row">
-        <button id="btn-draw" class="btn" type="button" disabled>绘制裁剪框</button>
-        <button id="btn-clear-crop" class="btn btn-plain" type="button" disabled>清除选框</button>
-        <span id="crop-readout" class="crop-readout">尚未选择裁剪区域</span>
+        <button id="btn-draw" class="btn" type="button" disabled data-i18n="crop.btnDraw">绘制裁剪框</button>
+        <button id="btn-clear-crop" class="btn btn-plain" type="button" disabled data-i18n="crop.btnClearCrop">清除选框</button>
+        <span id="crop-readout" class="crop-readout" data-i18n="crop.readoutEmpty">尚未选择裁剪区域</span>
       </div>
-      <p class="crop-tip">先暂停到要裁剪的画面，再点击「绘制裁剪框」并在画面上拖拽；可任意方向拖拽，框外区域会压暗。选框按画面比例保存，与预览画质无关。导出为 MP4 / H.264，宽高会向下取偶数（如 1919→1918）。快捷键：空格 播放/暂停，Esc 清除选框。</p>
+      <p class="crop-tip" data-i18n="crop.tip">先暂停到要裁剪的画面，再点击「绘制裁剪框」并在画面上拖拽；可任意方向拖拽，框外区域会压暗。选框按画面比例保存，与预览画质无关。导出为 MP4 / H.264，宽高会向下取偶数（如 1919→1918）。快捷键：空格 播放/暂停，Esc 清除选框。</p>
     </section>
 
     <!-- 输出设置 -->
     <section class="panel hidden" id="output-panel">
-      <div class="panel-header"><h3>输出设置</h3></div>
+      <div class="panel-header"><h3 data-i18n="crop.secOutput">输出设置</h3></div>
       <div class="form-grid settings-grid">
         <label class="form-item">
-          <span class="form-label">质量</span>
+          <span class="form-label" data-i18n="crop.lblQuality">质量</span>
           <select id="sel-quality">
-            <option value="high">高</option>
-            <option value="medium" selected>标准</option>
-            <option value="low">低</option>
+            <option value="high" data-i18n="crop.qualityHigh">高</option>
+            <option value="medium" selected data-i18n="crop.qualityMedium">标准</option>
+            <option value="low" data-i18n="crop.qualityLow">低</option>
           </select>
         </label>
         <label class="form-item form-item-dir">
-          <span class="form-label">输出目录</span>
+          <span class="form-label" data-i18n="crop.lblOutdir">输出目录</span>
           <span class="dir-picker">
-            <input id="input-outdir" type="text" readonly placeholder="与源文件相同" />
-            <button id="btn-pick-dir" class="btn" type="button">浏览…</button>
+            <input id="input-outdir" type="text" readonly placeholder="与源文件相同"
+                   data-i18n-attr="placeholder:crop.phOutdir" />
+            <button id="btn-pick-dir" class="btn" type="button" data-i18n="crop.btnBrowse">浏览…</button>
           </span>
         </label>
       </div>
-      <p class="caps-info">固定输出 MP4（H.264 + AAC，8-bit，保留全部音轨与文字标签）；已有文件会自动避开，不覆盖。</p>
+      <p class="caps-info" data-i18n="crop.capsInfo">固定输出 MP4（H.264 + AAC，8-bit，保留全部音轨与文字标签）；已有文件会自动避开，不覆盖。</p>
     </section>
 
     <!-- 进度与操作 -->
     <section class="panel hidden" id="action-panel">
       <div class="convert-actions">
-        <button id="btn-start" class="btn btn-primary" type="button" disabled>开始转换</button>
-        <button id="btn-cancel" class="btn btn-danger hidden" type="button">取消</button>
+        <button id="btn-start" class="btn btn-primary" type="button" disabled data-i18n="crop.btnStart">开始转换</button>
+        <button id="btn-cancel" class="btn btn-danger hidden" type="button" data-i18n="common.cancel">取消</button>
         <span id="status-text" class="status-text"></span>
       </div>
       <div class="progress-track">
@@ -97,6 +99,7 @@
     </section>
   </main>
 
+  <script src="js/i18n.js"></script>
   <script src="js/theme.js"></script>
   <script src="js/crop.js"></script>
 </body>

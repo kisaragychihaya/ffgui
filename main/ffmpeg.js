@@ -2,6 +2,8 @@ const { app, ipcMain, dialog, desktopCapturer, session } = require('electron');
 const { spawn, execFile, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+// 主进程文案（报错 / 警告 / 文件对话框标题）由 locales/<lng>.json 提供
+const { t } = require('./i18n');
 
 // ffmpeg 可执行文件路径：
 // - Windows：内置 bin/ffmpeg.exe（开发时读项目根 bin/，打包后经 extraResource 在 resources/bin/）
@@ -64,12 +66,12 @@ function parseHwaccels(output) {
   const result = [];
   let started = false;
   for (const line of lines) {
-    const t = line.trim();
+    const trimmed = line.trim();
     if (!started) {
-      if (/hardware acceleration methods/i.test(t)) started = true;
+      if (/hardware acceleration methods/i.test(trimmed)) started = true;
       continue;
     }
-    if (t) result.push(t);
+    if (trimmed) result.push(trimmed);
   }
   return result;
 }
@@ -133,11 +135,11 @@ function testEncoder(name) {
 async function detectCapabilities() {
   const ffmpeg = getFfmpegPath();
   if (!ffmpeg) {
-    throw new Error('未找到 ffmpeg，请先通过 Homebrew 安装：brew install ffmpeg');
+    throw new Error(t('main.err.ffmpegMissing'));
   }
   // 带路径分隔符的才做存在性检查（裸命令名靠 PATH 解析）
   if (ffmpeg.includes(path.sep) && !fs.existsSync(ffmpeg)) {
-    throw new Error(`未找到 ffmpeg：${ffmpeg}`);
+    throw new Error(t('main.err.ffmpegPathMissing', { path: ffmpeg }));
   }
 
   const [versionRes, hwRes, encRes, fmtRes] = await Promise.all([
@@ -265,7 +267,7 @@ function buildOutputPath(input, outputDir, format, reserved = new Set()) {
 function selectedAudioTrack(job) {
   if (job.audioTrack == null || job.audioTrack === '') return null;
   const track = Number(job.audioTrack);
-  if (!Number.isSafeInteger(track) || track < 1) throw new Error('音轨序号必须是从 1 开始的整数');
+  if (!Number.isSafeInteger(track) || track < 1) throw new Error(t('main.err.audioTrackInteger'));
   return track - 1;
 }
 
@@ -274,10 +276,10 @@ function validateAudioSelection(job, probes, merging = false) {
   const track = selectedAudioTrack(job);
   const count = (p) => p.audioTracks.length;
   if (track === null && SINGLE_AUDIO_FORMATS.has(job.format) && probes.some((p) => count(p) > 1)) {
-    throw new Error(`${job.format.toUpperCase()} 使用单音轨输出，请填写要保留的音轨序号，或改用 MKV/M4A 等多音轨格式`);
+    throw new Error(t('main.err.audioTrackRequired', { format: job.format.toUpperCase() }));
   }
   if (track !== null && (merging ? !probes.some((p) => count(p) > track) : probes.some((p) => count(p) <= track))) {
-    throw new Error(`输入文件没有第 ${track + 1} 条音轨`);
+    throw new Error(t('main.err.audioTrackMissing', { n: track + 1 }));
   }
 }
 
@@ -349,7 +351,7 @@ const DEVICE_PRESETS = {
 function normalizeConvertJob(job) {
   if (!job.devicePreset) return { ...job };
   const preset = DEVICE_PRESETS[job.devicePreset];
-  if (!preset) throw new Error('未知的设备预设');
+  if (!preset) throw new Error(t('main.err.unknownDevicePreset'));
   // 预设表内的锁定参数覆盖旧表单值（format/vcodec/.../sampleRate）
   return { ...job, ...preset };
 }
@@ -359,22 +361,23 @@ function normalizeConvertJob(job) {
 // 边界容差：只吸收浮点误差，避免 0.1+0.2 这类运算误差被误判为越界
 const CROP_EPS = 1e-6;
 
-// 校验并归一化 crop；非法时抛出中文错误。返回 null 表示未裁剪
+// 校验并归一化 crop；非法时抛出本地化错误。返回 null 表示未裁剪
 function normalizeCrop(crop) {
   if (crop == null) return null;
-  if (typeof crop !== 'object' || Array.isArray(crop)) throw new Error('裁剪区域格式无效，请重新框选');
+  if (typeof crop !== 'object' || Array.isArray(crop)) throw new Error(t('main.err.cropFormat'));
   const value = {};
   for (const key of ['x', 'y', 'w', 'h']) {
     const v = crop[key];
     if (typeof v !== 'number' || !Number.isFinite(v)) {
-      throw new Error(`裁剪区域的${key === 'x' ? 'X' : key === 'y' ? 'Y' : key === 'w' ? '宽度' : '高度'}无效，必须是数值`);
+      const field = { x: 'X', y: 'Y', w: t('main.label.cropWidth'), h: t('main.label.cropHeight') }[key];
+      throw new Error(t('main.err.cropFieldInvalid', { field }));
     }
     value[key] = v;
   }
-  if (value.x < 0 || value.y < 0) throw new Error('裁剪区域不能超出画面边界（起点不能为负）');
-  if (value.w <= 0 || value.h <= 0) throw new Error('裁剪区域的宽高必须大于 0');
-  if (value.x + value.w > 1 + CROP_EPS) throw new Error('裁剪区域不能超出画面右边界');
-  if (value.y + value.h > 1 + CROP_EPS) throw new Error('裁剪区域不能超出画面下边界');
+  if (value.x < 0 || value.y < 0) throw new Error(t('main.err.cropNegative'));
+  if (value.w <= 0 || value.h <= 0) throw new Error(t('main.err.cropZeroSize'));
+  if (value.x + value.w > 1 + CROP_EPS) throw new Error(t('main.err.cropRightEdge'));
+  if (value.y + value.h > 1 + CROP_EPS) throw new Error(t('main.err.cropBottomEdge'));
   return value;
 }
 
@@ -406,31 +409,31 @@ function validateConvertOptions(job) {
   const crop = normalizeCrop(job.crop);
   if (video) {
     if (job.vcodec === 'copy' && crop) {
-      throw new Error('直接复制视频不能裁剪，请选择编码器');
+      throw new Error(t('main.err.copyWithCrop'));
     }
     if (job.vcodec === 'copy' && (job.pixFmt || job.h264Profile || job.h264Level || job.fps || job.scale || job.hdr2sdr)) {
-      throw new Error('直接复制视频不能改变位深、Profile、Level、帧率、分辨率或动态范围，请选择编码器');
+      throw new Error(t('main.err.copyWithVideoOptions'));
     }
-    if (job.pixFmt && !['yuv420p', 'yuv420p10le'].includes(job.pixFmt)) throw new Error('不支持的像素格式');
+    if (job.pixFmt && !['yuv420p', 'yuv420p10le'].includes(job.pixFmt)) throw new Error(t('main.err.pixFmt'));
     if (job.h264Profile || job.h264Level) {
-      if (job.vcodec !== 'libx264') throw new Error('当前 Profile/Level 选项仅用于 H.264 (libx264)');
-      if (job.h264Profile && !['baseline', 'main', 'high', 'high10'].includes(job.h264Profile)) throw new Error('不支持的 H.264 Profile');
-      if (job.h264Level && !['2.1', '2.2', '3.0', '3.1', '4.0', '4.1', '4.2', '5.0', '5.1', '5.2'].includes(job.h264Level)) throw new Error('不支持的 H.264 Level');
+      if (job.vcodec !== 'libx264') throw new Error(t('main.err.profileNeedsX264'));
+      if (job.h264Profile && !['baseline', 'main', 'high', 'high10'].includes(job.h264Profile)) throw new Error(t('main.err.h264Profile'));
+      if (job.h264Level && !['2.1', '2.2', '3.0', '3.1', '4.0', '4.1', '4.2', '5.0', '5.1', '5.2'].includes(job.h264Level)) throw new Error(t('main.err.h264Level'));
       if (job.pixFmt === 'yuv420p10le' && ['baseline', 'main', 'high'].includes(job.h264Profile)) {
-        throw new Error('所选 H.264 Profile 不支持 10-bit，请选择 8-bit 或 High 10');
+        throw new Error(t('main.err.profile10bit'));
       }
     }
     if (job.fps) {
       const fpsNum = Number(job.fps);
-      if (!isFinite(fpsNum) || fpsNum <= 0 || fpsNum > 240) throw new Error('不支持的帧率，应为 1–240 之间的数字');
+      if (!isFinite(fpsNum) || fpsNum <= 0 || fpsNum > 240) throw new Error(t('main.err.fps'));
     }
   }
   if (audio) {
-    if (job.acodec === 'copy' && (job.channels || job.sampleRate)) throw new Error('直接复制音频不能改变声道或采样率');
-    if (job.channels && ![1, 2, 6].includes(Number(job.channels))) throw new Error('不支持的声道数');
-    if (job.sampleRate && ![22050, 32000, 44100, 48000, 96000].includes(Number(job.sampleRate))) throw new Error('不支持的采样率');
+    if (job.acodec === 'copy' && (job.channels || job.sampleRate)) throw new Error(t('main.err.copyWithAudioOptions'));
+    if (job.channels && ![1, 2, 6].includes(Number(job.channels))) throw new Error(t('main.err.channels'));
+    if (job.sampleRate && ![22050, 32000, 44100, 48000, 96000].includes(Number(job.sampleRate))) throw new Error(t('main.err.sampleRate'));
   }
-  if (job.format === 'mp3' && job.id3Version && !['3', '4'].includes(String(job.id3Version))) throw new Error('ID3 版本必须为 2.3 或 2.4');
+  if (job.format === 'mp3' && job.id3Version && !['3', '4'].includes(String(job.id3Version))) throw new Error(t('main.err.id3Version'));
 }
 
 function buildArgs(job, input, outPath, probe = {}) {
@@ -700,7 +703,7 @@ function runFfmpegTask({ args, index, label, output, getDuration, onStderrText, 
         // 取消时清掉本次任务已写出的半成品，避免磁盘残留无法播放的残缺文件
         removeCancelledOutput(output, outputExisted);
         console.log(`[ffgui] 已取消 (${index + 1}): ${label}`);
-        send({ type: 'file-error', index, input: label, error: '已取消' });
+        send({ type: 'file-error', index, input: label, error: t('main.err.cancelled') });
         return resolve({ ok: false, cancelled: true });
       }
       // 部分 FFmpeg 构建在 -n 拒绝覆盖时仍返回 0，必须同时收到完成统计块。
@@ -711,7 +714,9 @@ function runFfmpegTask({ args, index, label, output, getDuration, onStderrText, 
       } else {
         console.log(`[ffgui] ${taskName}失败 (${index + 1})，退出码 ${code}: ${label}`);
         const tail = stderrTail.split(/\r?\n/).filter(Boolean).slice(-5).join('\n');
-        const reason = code === 0 ? 'ffmpeg 未完成输出' : `ffmpeg 退出码 ${code}`;
+        const reason = code === 0
+          ? t('main.err.ffmpegIncompleteOutput')
+          : t('main.err.ffmpegExitCode', { code });
         send({ type: 'file-error', index, input: label, error: `${reason}\n${tail}` });
         resolve({ ok: false });
       }
@@ -727,7 +732,7 @@ async function convertOne(job, input, index, send, outPath) {
     args = buildArgs(job, input, outPath, probe);
     if (probe.covers.length && job.preserveCover !== false && AUDIO_ONLY_FORMATS.has(job.format)
         && !['mp3', 'm4a', 'flac'].includes(job.format)) {
-      send({ type: 'file-warning', index, input, warning: '此输出格式尚未实现封面保留；需要封面时请选择 MP3、M4A 或 FLAC' });
+      send({ type: 'file-warning', index, input, warning: t('main.warn.coverUnsupported') });
     }
     if (cancelled) return { ok: false, cancelled: true };
   } catch (err) {
@@ -826,20 +831,20 @@ function probeSubtitleDuration(file) {
     let max = 0;
     // srt / vtt：00:01:23,456 或 00:01:23.456
     for (const m of text.matchAll(/(\d{1,2}):(\d{2}):(\d{2})[.,](\d{1,3})/g)) {
-      const t = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
+      const sec = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
         + Number(m[4].padEnd(3, '0')) / 1000;
-      if (t > max) max = t;
+      if (sec > max) max = sec;
     }
     // vtt 简写：01:23.456（无小时位）
     for (const m of text.matchAll(/(?<![:\d])(\d{2}):(\d{2})[.,](\d{1,3})/g)) {
-      const t = Number(m[1]) * 60 + Number(m[2]) + Number(m[3].padEnd(3, '0')) / 1000;
-      if (t > max) max = t;
+      const sec = Number(m[1]) * 60 + Number(m[2]) + Number(m[3].padEnd(3, '0')) / 1000;
+      if (sec > max) max = sec;
     }
     // ass / ssa：Dialogue: 0,0:01:23.45,...
     for (const m of text.matchAll(/(\d{1,2}):(\d{2}):(\d{2})\.(\d{1,2})/g)) {
-      const t = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
+      const sec = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
         + Number(m[4].padEnd(2, '0')) / 100;
-      if (t > max) max = t;
+      if (sec > max) max = sec;
     }
     return max;
   } catch {
@@ -899,7 +904,7 @@ function buildMergeArgs(job, probes, useX264) {
       if (p.audioTracks[track]) {
         source = `${i}:a:${track}`;
       } else {
-        if (!(p.duration > 0)) throw new Error('缺失音轨的片段无法读取时长，不能补静音');
+        if (!(p.duration > 0)) throw new Error(t('main.err.mergeMissingDuration'));
         lavfi.push({ kind: 'silence', duration: p.duration });
         source = `${lavfiBase + lavfi.length - 1}:a`;
       }
@@ -913,11 +918,11 @@ function buildMergeArgs(job, probes, useX264) {
 
   // lavfi 输入按索引顺序追加在媒体（与字幕）输入之后
   for (const l of lavfi) {
-    const t = Math.max(0.1, l.duration || 1).toFixed(2);
+    const dur = Math.max(0.1, l.duration || 1).toFixed(2);
     if (l.kind === 'black') {
-      args.push('-f', 'lavfi', '-t', t, '-i', `color=c=black:s=${W}x${H}:r=30`);
+      args.push('-f', 'lavfi', '-t', dur, '-i', `color=c=black:s=${W}x${H}:r=30`);
     } else {
-      args.push('-f', 'lavfi', '-t', t, '-i', 'anullsrc=r=44100:cl=stereo');
+      args.push('-f', 'lavfi', '-t', dur, '-i', 'anullsrc=r=44100:cl=stereo');
     }
   }
 
@@ -960,29 +965,29 @@ async function runMerge(sender, job) {
     if (!sender.isDestroyed()) sender.send('ffgui:convert-event', evt);
   };
   const fail = (msg) => {
-    send({ type: 'file-error', index: 0, input: '合并任务', error: msg });
+    send({ type: 'file-error', index: 0, input: t('main.label.mergeTask'), error: msg });
     return { total: 1, done: 0, cancelled: false };
   };
 
   const hasSubtitle = !!(job.subtitle && job.subtitle.path);
   if (!job.inputs || job.inputs.length < (hasSubtitle ? 1 : 2)) {
-    return fail(hasSubtitle ? '合并至少需要 1 个音视频文件' : '合并至少需要 2 个文件');
+    return fail(hasSubtitle ? t('main.err.mergeNeedOne') : t('main.err.mergeNeedTwo'));
   }
 
   const probes = await Promise.all(job.inputs.map(probeFile));
   if (probes.some((p) => !p.hasVideo && !p.hasAudio)) {
-    return fail('队列中存在无法识别的文件（无音视频流）');
+    return fail(t('main.err.mergeUnrecognized'));
   }
 
   const anyVideo = probes.some((p) => p.hasVideo);
   if (hasSubtitle && !anyVideo) {
-    return fail('纯音频合并不支持添加字幕，请先移除字幕文件');
+    return fail(t('main.err.mergeAudioSubtitle'));
   }
   if (anyVideo && AUDIO_ONLY_FORMATS.has(job.format)) {
-    return fail('队列中包含视频文件，请选择视频输出格式（如 MP4/MKV）');
+    return fail(t('main.err.mergeVideoFormat'));
   }
   if (!anyVideo && !AUDIO_ONLY_FORMATS.has(job.format)) {
-    return fail('队列为纯音频，请选择音频输出格式（如 MP3/FLAC）');
+    return fail(t('main.err.mergeAudioFormat'));
   }
 
   // libx264 可用则优先使用，否则交给容器默认编码器
@@ -1002,7 +1007,7 @@ async function runMerge(sender, job) {
   const result = await runFfmpegTask({
     args,
     index: 0,
-    label: `合并 ${probes.length} 个文件`,
+    label: t('main.label.mergeFiles', { n: probes.length }),
     output,
     getDuration: () => totalDuration,
     send,
@@ -1034,7 +1039,7 @@ async function runClip(sender, job) {
   const start = Number(job.start);
   const end = Number(job.end);
   if (!job.input || !(start >= 0) || !(end > start)) {
-    send({ type: 'file-error', index: 0, input: '截取任务', error: '起止时间无效（终点必须大于起点）' });
+    send({ type: 'file-error', index: 0, input: t('main.label.clipTask'), error: t('main.err.clipTimeInvalid') });
     return { total: 1, done: 0, cancelled: false };
   }
   // 输出与源文件同目录同扩展名；同名时 buildOutputPath 自动加 _ffgui 后缀
@@ -1142,7 +1147,7 @@ async function runRecordRemux(sender, input) {
   };
   const probe = await probeFile(input);
   if (!probe.hasVideo) {
-    send({ type: 'file-error', index: 0, input, error: '录制文件中没有视频流，无法转 MP4' });
+    send({ type: 'file-error', index: 0, input, error: t('main.err.recordNoVideo') });
     return { done: 0, cancelled: false, output: null };
   }
   const outPath = buildOutputPath(input, null, 'mp4');
@@ -1187,11 +1192,11 @@ function registerIpc() {
   ipcMain.handle('ffgui:pickMediaFiles', async (event) => {
     const win = require('electron').BrowserWindow.fromWebContents(event.sender);
     const res = await dialog.showOpenDialog(win, {
-      title: '选择音视频文件',
+      title: t('main.dialog.pickMedia'),
       properties: ['openFile', 'multiSelections'],
       filters: [
-        { name: '音视频文件', extensions: ['mp4', 'mkv', 'avi', 'mov', 'flv', 'wmv', 'webm', 'ts', 'm4v', 'mp3', 'aac', 'flac', 'wav', 'ogg', 'm4a', 'wma'] },
-        { name: '所有文件', extensions: ['*'] },
+        { name: t('main.dialog.filterMedia'), extensions: ['mp4', 'mkv', 'avi', 'mov', 'flv', 'wmv', 'webm', 'ts', 'm4v', 'mp3', 'aac', 'flac', 'wav', 'ogg', 'm4a', 'wma'] },
+        { name: t('main.dialog.filterAllFiles'), extensions: ['*'] },
       ],
     });
     return res.canceled ? [] : res.filePaths;
@@ -1200,7 +1205,7 @@ function registerIpc() {
   ipcMain.handle('ffgui:pickDirectory', async (event) => {
     const win = require('electron').BrowserWindow.fromWebContents(event.sender);
     const res = await dialog.showOpenDialog(win, {
-      title: '选择输出目录',
+      title: t('main.dialog.pickDirectory'),
       properties: ['openDirectory', 'createDirectory'],
     });
     return res.canceled ? null : res.filePaths[0];
@@ -1215,11 +1220,11 @@ function registerIpc() {
   ipcMain.handle('ffgui:pickSubtitle', async (event) => {
     const win = require('electron').BrowserWindow.fromWebContents(event.sender);
     const res = await dialog.showOpenDialog(win, {
-      title: '选择字幕文件',
+      title: t('main.dialog.pickSubtitle'),
       properties: ['openFile'],
       filters: [
-        { name: '字幕文件', extensions: ['srt', 'ass', 'ssa', 'vtt'] },
-        { name: '所有文件', extensions: ['*'] },
+        { name: t('main.dialog.filterSubtitle'), extensions: ['srt', 'ass', 'ssa', 'vtt'] },
+        { name: t('main.dialog.filterAllFiles'), extensions: ['*'] },
       ],
     });
     return res.canceled ? null : res.filePaths[0];
@@ -1236,16 +1241,16 @@ function registerIpc() {
   ipcMain.handle('ffgui:captureFrame', async (event, payload) => {
     const win = require('electron').BrowserWindow.fromWebContents(event.sender);
     const res = await dialog.showSaveDialog(win, {
-      title: '另存为图像',
+      title: t('main.dialog.saveFrame'),
       defaultPath: payload.defaultName || 'frame.png',
-      filters: [{ name: 'PNG 图像', extensions: ['png'] }],
+      filters: [{ name: t('main.dialog.filterPng'), extensions: ['png'] }],
     });
     if (res.canceled || !res.filePath) return null;
     // -ss 放 -i 前快速定位；输出为图像（重新编码单帧），时间点精确
     await runFfmpeg(['-hide_banner', '-y', '-ss', String(Number(payload.time) || 0),
       '-i', payload.input, '-frames:v', '1', res.filePath]);
     if (!fs.existsSync(res.filePath)) {
-      throw new Error('抓帧失败，请检查该时间点是否存在画面');
+      throw new Error(t('main.err.captureFrameFailed'));
     }
     console.log(`[ffgui] 已保存截图: ${res.filePath}`);
     return res.filePath;
@@ -1262,9 +1267,9 @@ function registerIpc() {
     const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
       + `-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
     const res = await dialog.showSaveDialog(win, {
-      title: '选择录制输出位置',
+      title: t('main.dialog.recordOutput'),
       defaultPath: path.join(app.getPath('videos'), `record_${ts}.webm`),
-      filters: [{ name: 'WebM 视频', extensions: ['webm'] }],
+      filters: [{ name: t('main.dialog.filterWebm'), extensions: ['webm'] }],
     });
     return res.canceled || !res.filePath ? null : res.filePath;
   });
@@ -1273,7 +1278,7 @@ function registerIpc() {
   // 杜绝两个录制写同一文件造成截断损坏
   ipcMain.handle('ffgui:recordStart', (_event, targetPath) => {
     if (recordStreams.has(targetPath)) {
-      throw new Error('该输出文件已在录制中，请先停止后再开始');
+      throw new Error(t('main.err.recordBusy'));
     }
     const stream = fs.createWriteStream(targetPath);
     recordStreams.set(targetPath, stream);
@@ -1286,7 +1291,7 @@ function registerIpc() {
   ipcMain.handle('ffgui:recordWriteChunk', (event, targetPath, buf) => new Promise((resolve, reject) => {
     const stream = recordStreams.get(targetPath);
     if (!stream) {
-      reject(new Error('录制输出流不存在（录制已结束或未开始）'));
+      reject(new Error(t('main.err.recordStreamMissing')));
       return;
     }
     stream.write(Buffer.from(buf), (err) => {

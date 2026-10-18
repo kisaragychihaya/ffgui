@@ -1,13 +1,16 @@
 // 功能导航：首页卡片 <-> 功能页占位 的视图切换
 (function () {
-  const FEATURE_NAMES = {
-    convert: '音视频转码',
-    merge: '音视频合并',
-    clip: '音视频截取',
-    crop: '画面裁剪',
-    record: '屏幕录制',
-    disc: '光盘抓取',
+  const t = window.i18n.t;
+  // 功能名走词典，键与首页卡片标题一致
+  const FEATURE_KEYS = {
+    convert: 'home.cardConvertTitle',
+    merge: 'home.cardMergeTitle',
+    clip: 'home.cardClipTitle',
+    crop: 'home.cardCropTitle',
+    record: 'home.cardRecordTitle',
+    disc: 'home.cardDiscTitle',
   };
+  let currentFeature = null;
 
   const homeView = document.getElementById('home-view');
   const featureView = document.getElementById('feature-view');
@@ -41,12 +44,18 @@
       window.location.href = 'disc.html';
       return;
     }
-    const name = FEATURE_NAMES[feature];
-    if (!name) return;
-    featureTitle.textContent = name;
-    featureName.textContent = name;
+    if (!FEATURE_KEYS[feature]) return;
+    currentFeature = feature;
+    renderFeatureName();
     homeView.classList.add('hidden');
     featureView.classList.remove('hidden');
+  }
+
+  function renderFeatureName() {
+    if (!currentFeature) return;
+    const name = t(FEATURE_KEYS[currentFeature]);
+    featureTitle.textContent = name;
+    featureName.textContent = name;
   }
 
   function goHome() {
@@ -62,18 +71,21 @@
 
   // 清除 ffmpeg 能力缓存（下次进入转码页时重新探测硬件）
   const btnClearCache = document.getElementById('btn-clear-cache');
-  const CLEAR_TEXT = '清除硬件信息缓存';
+  const CLEAR_TEXT_KEY = 'home.clearCache';
   btnClearCache.addEventListener('click', async () => {
     btnClearCache.disabled = true;
     try {
       await window.ffgui.clearCapsCache();
-      btnClearCache.textContent = '已清除，将重新检测';
+      btnClearCache.textContent = t('home.cacheCleared');
     } catch {
-      btnClearCache.textContent = '清除失败';
+      btnClearCache.textContent = t('home.cacheClearFailed');
     }
     setTimeout(() => {
-      btnClearCache.textContent = CLEAR_TEXT;
+      btnClearCache.textContent = t(CLEAR_TEXT_KEY);
       btnClearCache.disabled = false;
     }, 2000);
   });
+
+  // 语言切换：占位视图里动态写入的功能名需要重刷（静态文案由 data-i18n 自动刷新）
+  window.i18n.onChange(renderFeatureName);
 })();

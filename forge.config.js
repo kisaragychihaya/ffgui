@@ -109,10 +109,19 @@ module.exports = {
       /^\/scripts($|\/)/,
       /^\/docs($|\/)/,
       /^\/README\.md$/,
+      /^\/README\.zh\.md$/,
       /^\/AGENTS\.md$/,
       /^\/\.gitignore$/,
       /^\/\.npmrc$/,
       /^\/forge\.config\.js$/,
+      // 构建期工具：NSISBI 编译器（tools/nsisbi，约 377 个文件，本机跑过 make 后
+      // 才会出现）、NSIS maker 适配层与安装脚本，都只在打包/编译安装包时用，
+      // 不进 asar。tools/ 整个排除，避免以后再往 tools/ 放工具时又被打进包
+      /^\/tools($|\/)/,
+      /^\/makers($|\/)/,
+      /^\/assets\/installer\.nsi$/,
+      /^\/_cdp_debug\.js$/,
+      /^\/\.github($|\/)/,
       // Rust 光盘侧车源码与构建产物由 extraResource 提供二进制，不进 asar
       /^\/native($|\/)/,
       /^\/bin\/disc($|\/)/,

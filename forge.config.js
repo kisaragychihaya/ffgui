@@ -52,6 +52,8 @@ async function minifyFiles(dir) {
 // 界面仅简体中文：裁剪多余语言 pak（约 45MB/55 个）
 // dxcompiler/dxil 仅供 WebGPU 使用（应用未用），删除（约 26MB）
 // vk_swiftshader 保留：无 GPU 环境（虚拟机/远程桌面）渲染兜底
+// LICENSES.chromium.html 是 Chromium 的许可证全文，运行时无引用（约 19MB）；
+// 项目自身的 LGPL-3.0 许可证见仓库根 LICENSE，仍随包分发
 function trimRuntime(buildPath) {
   const root = path.resolve(buildPath, '..', '..');
   const localesDir = path.join(root, 'locales');
@@ -62,7 +64,7 @@ function trimRuntime(buildPath) {
       }
     }
   }
-  for (const f of ['dxcompiler.dll', 'dxil.dll']) {
+  for (const f of ['dxcompiler.dll', 'dxil.dll', 'LICENSES.chromium.html']) {
     const p = path.join(root, f);
     if (fs.existsSync(p)) fs.rmSync(p);
   }

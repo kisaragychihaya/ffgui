@@ -21,6 +21,13 @@ libfreemkv = "1.8"
 libfreemkv = { version = "1.8", features = ["test-util"] }
 tempfile = "3"
 
+# 打包瘦身：strip 去掉符号表与调试信息，LTO + 单 codegen unit 换取更小的产物
+# （实测 11.3MB → 9.5MB，代价是 release 构建时间明显变长）
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+
 # freemkv 的三个 crate 均不在 crates.io 上，必须由 workspace 根的 [patch.crates-io]
 # 指向固定的 git tag（v1.8.4 = 上游 tag，对应 rev 见下）。
 [patch.crates-io]

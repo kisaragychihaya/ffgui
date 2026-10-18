@@ -325,7 +325,10 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
 - `packagerConfig.ignore` 已排除全部构建期文件（`tools/`、`makers/`、`assets/installer.nsi`、
   `_cdp_debug.js`、`.github/`、各类 md）。其中 `/^\/tools($|\/)/` 尤其重要：`tools/nsisbi/`
   是本机跑过 `npm run make` 后才出现的 NSISBI 编译器（377 个文件），漏排会整份打进 asar
-  （实测 447 → 63 个条目）。新增构建脚本/工具目录时记得同步这里
+  （实测 447 → 63 个条目）。新增构建脚本/工具目录时记得同步这里；CI 的 ffmpeg 解压残留
+  也曾漏排（`ffmpeg-<版本>-full_build/` 约 860MB 进 asar，安装包 149 → 493MB），现在
+  workflow 解压到 `$RUNNER_TEMP` 且 ignore 兜底 `/^\/ffmpeg-.*/`，**新增 CI 解压步骤时
+  不要往仓库根目录留大目录**
 - `package.json` 中 `allowScripts` 是非 npm 标准字段（模板残留），当前无实际作用
 - 多语言：ja / ko 译文由本仓库维护，专业术语（编码器 / 容器 / 预设名）已统一，但措辞未经母语
   审校；新增文案须同时补齐五种语言（`scripts/i18n.test.cjs` 会拦键集合与占位符不一致）。

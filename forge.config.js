@@ -104,6 +104,11 @@ module.exports = {
       /^\/test_media($|\/)/,
       // bin 由 extraResource 提供，不进 asar
       /^\/bin($|\/)/,
+      // CI 在仓库根目录 7z x ffmpeg.7z 的解压残留（ffmpeg-<版本>-full_build/ 等，含
+      // ffplay/ffprobe/doc 约 860MB），只从中取 bin/ffmpeg.exe，必须排除
+      /^\/ffmpeg-.*($|\/)/,
+      /^\/ffmpeg\.7z$/,
+      /^\/ffmpeg\.zip$/,
       /^\/\.idea($|\/)/,
       /^\/\.git($|\/)/,
       /^\/\.agents($|\/)/,

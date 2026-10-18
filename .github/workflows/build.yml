@@ -44,9 +44,15 @@ jobs:
           $asset = $rel.assets | Where-Object { $_.name -match 'full_build\.7z$' } | Select-Object -First 1
           if (-not $asset) { throw 'codexffmpeg 最新 release 中未找到 full_build.7z' }
           Write-Host "下载 $($asset.name)"
-          curl.exe -L -o ffmpeg.7z $asset.browser_download_url
-          7z x ffmpeg.7z | Out-Null
-          $exe = Get-ChildItem -Recurse -Filter ffmpeg.exe |
+          # 解压到临时目录再取 bin/ffmpeg.exe：在仓库根目录解压会留下
+          # ffmpeg-<版本>-full_build/ 残留（含 ffplay/ffprobe/doc 约 860MB），
+          # 会被打进 app.asar（forge.config.js 的 ignore 虽已排除，仍从源头避免）
+          $tmp = Join-Path $env:RUNNER_TEMP 'ffmpeg-extract'
+          Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $tmp | Out-Null
+          curl.exe -L -o "$tmp\ffmpeg.7z" $asset.browser_download_url
+          7z x "$tmp\ffmpeg.7z" -o"$tmp" | Out-Null
+          $exe = Get-ChildItem -Recurse -Filter ffmpeg.exe -Path $tmp |
             Where-Object { $_.FullName -like '*bin*' } | Select-Object -First 1
           if (-not $exe) { throw '压缩包中未找到 ffmpeg.exe' }
           New-Item -ItemType Directory -Force bin | Out-Null
@@ -162,9 +168,15 @@ jobs:
           $asset = $rel.assets | Where-Object { $_.name -match 'full-static-win-arm64\.7z$' } | Select-Object -First 1
           if (-not $asset) { throw 'ffmpeg-win-arm64 最新 release 中未找到 full-static-win-arm64.7z' }
           Write-Host "下载 $($asset.name)"
-          curl.exe -L -o ffmpeg.7z $asset.browser_download_url
-          7z x ffmpeg.7z | Out-Null
-          $exe = Get-ChildItem -Recurse -Filter ffmpeg.exe |
+          # 解压到临时目录再取 bin/ffmpeg.exe：在仓库根目录解压会留下
+          # ffmpeg-<版本> 残留目录（含 ffplay/ffprobe/doc，约 860MB），
+          # 会被打进 app.asar（forge.config.js 的 ignore 虽已排除，仍从源头避免）
+          $tmp = Join-Path $env:RUNNER_TEMP 'ffmpeg-arm64-extract'
+          Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $tmp | Out-Null
+          curl.exe -L -o "$tmp\ffmpeg.7z" $asset.browser_download_url
+          7z x "$tmp\ffmpeg.7z" -o"$tmp" | Out-Null
+          $exe = Get-ChildItem -Recurse -Filter ffmpeg.exe -Path $tmp |
             Where-Object { $_.FullName -like '*bin*' } | Select-Object -First 1
           if (-not $exe) { throw '压缩包中未找到 ffmpeg.exe' }
           New-Item -ItemType Directory -Force bin | Out-Null
@@ -249,10 +261,12 @@ jobs:
           if [ -z "$url" ]; then echo 'ffmpeg_build_mac 最新 release 中未找到 macos-arm64-static tar.gz'; exit 1; fi
           echo "下载 $url"
           curl -L -o ffmac.tar.gz "$url"
-          mkdir -p ffmac
+          # 解压到临时目录再取 bin/ lib/：留在仓库根会被打进 app.asar
+          rm -rf ffmac && mkdir -p ffmac
           tar xzf ffmac.tar.gz -C ffmac
           mkdir -p bin
           cp -R ffmac/bin ffmac/lib bin/
+          rm -rf ffmac ffmac.tar.gz
           chmod +x bin/bin/ffmpeg
           ./bin/bin/ffmpeg -version | head -1
 

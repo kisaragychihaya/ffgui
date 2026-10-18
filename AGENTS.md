@@ -317,9 +317,11 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
   `packagerConfig.icon`、index.js 窗口图标与各 HTML favicon 引用
 - 体积较大：`bin/ffmpeg.exe`（约 140–210MB）经 extraResource 原样分发且不进 asar，
   `packagerConfig.ignore` 中的 `/^\/bin($|\/)/` 规则不要删除。已做精简：不带 ffprobe、
-  packageAfterCopy 裁剪 Electron 语言包（仅 zh-CN/en-US，省约 45MB）并删除仅 WebGPU 使用的
-  dxcompiler.dll/dxil.dll（省约 26MB），arm64 载荷约 420MB、安装包约 119MB；如仍嫌大可把 CI
-  的 ffmpeg 换成 gyan.dev essentials 构建（能力有缩水，需评估）
+  packageAfterCopy 裁剪 Electron 语言包（仅 zh-CN/en-US，省约 45MB）、删除仅 WebGPU 使用的
+  dxcompiler.dll/dxil.dll（省约 26MB）与运行时无引用的 LICENSES.chromium.html（省约 19MB），
+  Rust 侧车启用 `profile.release` 的 strip/LTO/codegen-units=1（11.3MB → 9.5MB），
+  arm64 载荷约 420MB、安装包约 119MB；如仍嫌大可把 CI 的 ffmpeg 换成 gyan.dev essentials
+  构建（33MB，但会失去 libxvid/libkvazaar/libopenh264/prores_ks/ac3/eac3 等编码能力，需评估）
 - `packagerConfig.ignore` 已排除全部构建期文件（`tools/`、`makers/`、`assets/installer.nsi`、
   `_cdp_debug.js`、`.github/`、各类 md）。其中 `/^\/tools($|\/)/` 尤其重要：`tools/nsisbi/`
   是本机跑过 `npm run make` 后才出现的 NSISBI 编译器（377 个文件），漏排会整份打进 asar
@@ -333,7 +335,7 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
   （页面隔离保证不并发）
 - 光盘抓取限制：物理光驱代码已接入（open_scan/DiscSession）但未真机验证，本机无光驱；AACS
   keydb 需用户自备本地 KEYDB.cfg，在线密钥服务禁用；BD+ 盘未验证；`bin/disc/ffgui-disc.exe`
-  （约 11MB）随 extraResource 分发，三个 CI 平台均先构建对应架构侧车再打包
+  （约 9.5MB，已启用 strip/LTO）随 extraResource 分发，三个 CI 平台均先构建对应架构侧车再打包
 
 ## 测试方式
 

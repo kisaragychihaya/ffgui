@@ -44,6 +44,10 @@
       window.location.href = 'disc.html';
       return;
     }
+    if (feature === 'cdrip') {
+      window.location.href = 'cdrip.html';
+      return;
+    }
     if (!FEATURE_KEYS[feature]) return;
     currentFeature = feature;
     renderFeatureName();

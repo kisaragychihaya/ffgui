@@ -1,0 +1,205 @@
+/* ---------- CD 抓轨页 ---------- */
+
+.cd-view {
+  max-width: 900px;
+}
+
+/* 来源选择行：光驱下拉 + 刷新 */
+.cd-source-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.cd-drive {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cd-drive label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.cd-drive select {
+  max-width: 320px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+}
+
+.cd-drive select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 光盘整体信息：DiscID / 曲目数 / 时长 */
+.cd-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.cd-meta-tag {
+  padding: 2px 10px;
+  border-radius: 6px;
+  background: var(--hover-bg);
+  color: var(--text-secondary);
+}
+
+/* MusicBrainz 查询结果区 */
+.cd-mb {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.cd-mb-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.cd-mb-list {
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.cd-mb-item {
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cd-mb-item:last-child {
+  border-bottom: none;
+}
+
+.cd-mb-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.cd-mb-item-name {
+  font-weight: 600;
+  min-width: 0;
+}
+
+.cd-mb-item-meta {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.cd-mb-item-detail {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* 曲目列表 */
+.cd-track-list {
+  list-style: none;
+  max-height: 460px;
+  overflow-y: auto;
+}
+
+.cd-track {
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cd-track:last-child {
+  border-bottom: none;
+}
+
+.cd-track-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.cd-track-head input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.cd-track-number {
+  flex-shrink: 0;
+  min-width: 24px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cd-track-duration {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cd-track-state {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cd-track-state.running {
+  color: var(--accent);
+}
+
+.cd-track-state.done {
+  color: var(--accent);
+}
+
+.cd-track-state.error {
+  color: var(--danger);
+}
+
+/* 每首的曲名 / 演唱者输入 */
+.cd-track-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0 0 29px;
+}
+
+.cd-track-fields input {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+}
+
+.cd-track-fields input:focus {
+  border-color: var(--accent);
+}
+
+.cd-track-fields input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

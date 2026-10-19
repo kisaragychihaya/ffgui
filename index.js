@@ -43,6 +43,8 @@ app.whenReady().then(() => {
   require('./main/ffmpeg').registerIpc();
   // 光盘抓取：Rust 侧车 + 内部 FFmpeg 转码编排
   require('./main/disc').registerDiscIpc();
+  // CD 抓轨：libcdio 读取音频 CD，FFmpeg 编码 FLAC 无损
+  require('./main/cdrip').registerCdIpc();
   // 主题：先应用持久化设置（nativeTheme.themeSource），再注册切换 IPC
   const theme = require('./main/theme');
   theme.initTheme();

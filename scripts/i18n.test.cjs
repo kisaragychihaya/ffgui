@@ -12,7 +12,7 @@ const vm = require('node:vm');
 
 const repo = path.resolve(__dirname, '..');
 const LANGS = ['zh-CN', 'zh-TW', 'en', 'ja', 'ko'];
-const PAGES = ['index', 'convert', 'merge', 'clip', 'crop', 'record', 'disc'];
+const PAGES = ['index', 'convert', 'merge', 'clip', 'crop', 'record', 'disc', 'cdrip'];
 
 const dicts = Object.fromEntries(LANGS.map((lng) => [
   lng, JSON.parse(fs.readFileSync(path.join(repo, 'locales', `${lng}.json`), 'utf8')),
@@ -44,9 +44,15 @@ function referencedKeys() {
         if (idx >= 0) found.add(pair.slice(idx + 1).trim());
       }
     }
-    const js = fs.readFileSync(path.join(repo, `html/js/${page}.js`), 'utf8');
-    for (const m of js.matchAll(/\bt\(\s*'([\w.-]+)'/g)) found.add(m[1]);
-    for (const m of js.matchAll(/labelKey:\s*'([\w.-]+)'/g)) found.add(m[1]);
+    // 页面脚本一般与页面同名，也允许自定义文件名（cdrip.html 用 js/cd.js）
+    const scripts = [...new Set([`${page}.js`, 'cd.js'])]
+      .map((name) => path.join(repo, 'html', 'js', name))
+      .filter((file) => fs.existsSync(file));
+    for (const file of scripts) {
+      const js = fs.readFileSync(file, 'utf8');
+      for (const m of js.matchAll(/\bt\(\s*'([\w.-]+)'/g)) found.add(m[1]);
+      for (const m of js.matchAll(/labelKey:\s*'([\w.-]+)'/g)) found.add(m[1]);
+    }
   }
   return found;
 }
@@ -72,11 +78,14 @@ test('词典：页面与脚本引用的键全部存在，且无未使用的键',
   assert.deepEqual(missing, [], 'HTML/JS 引用的键必须都在词典里');
   // 动态拼键（如预设表里的 tipKey、`t('convert.tip' + key)`）按「键名以字面量出现」认定已使用
   const corpus = PAGES.map((page) => fs.readFileSync(path.join(repo, `html/${page}.html`), 'utf8')
-    + fs.readFileSync(path.join(repo, `html/js/${page}.js`), 'utf8')).join('\n')
+    + [...new Set([`${page}.js`, 'cd.js'])]
+      .map((name) => path.join(repo, 'html', 'js', name))
+      .filter((file) => fs.existsSync(file))
+      .map((file) => fs.readFileSync(file, 'utf8')).join('\n')).join('\n')
     + fs.readFileSync(path.join(repo, 'html/js/theme.js'), 'utf8')
     + fs.readFileSync(path.join(repo, 'html/js/i18n.js'), 'utf8')
     // 主进程文案（报错 / 对话框标题 / 筛选器名）
-    + ['main/ffmpeg.js', 'main/disc.js', 'main/i18n.js']
+    + ['main/ffmpeg.js', 'main/disc.js', 'main/cdrip.js', 'main/i18n.js']
       .map((file) => fs.readFileSync(path.join(repo, file), 'utf8')).join('\n');
   const unused = zhKeys.filter((key) => !used.has(key) && !corpus.includes(key));
   assert.deepEqual(unused, [], '词典里不应有页面未引用的键（避免堆积死文案）');
@@ -87,8 +96,13 @@ test('页面：i18n.js 先于 theme.js 与页面脚本加载，且标注了标�
     const html = fs.readFileSync(path.join(repo, `html/${page}.html`), 'utf8');
     const i18nIdx = html.indexOf('js/i18n.js');
     const themeIdx = html.indexOf('js/theme.js');
-    const pageIdx = html.indexOf(`js/${page}.js`);
+    // 页面脚本通常与页面同名（convert.html -> js/convert.js），
+    // cdrip.html 用更短的 js/cd.js，两种都接受
+    const pageIdx = Math.min(...[`js/${page}.js`, 'js/cd.js']
+      .map((src) => html.indexOf(src))
+      .filter((idx) => idx !== -1));
     assert.ok(i18nIdx !== -1, `${page}.html 须引入 js/i18n.js`);
+    assert.ok(themeIdx !== -1, `${page}.html 须引入 js/theme.js`);
     assert.ok(i18nIdx < themeIdx && themeIdx < pageIdx,
       `${page}.html 加载顺序须为 i18n.js → theme.js → 页面脚本`);
     const title = html.match(/<html[^>]*data-i18n-title="([^"]+)"/);

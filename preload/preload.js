@@ -67,8 +67,23 @@ contextBridge.exposeInMainWorld('ffgui', {
     return () => ipcRenderer.removeListener('ffgui:disc-event', listener);
   },
 
-  // 屏幕录制（渲染进程 getDisplayMedia + MediaRecorder 采集编码，分块写入主进程）
-  recordPickOutput: () => ipcRenderer.invoke('ffgui:recordPickOutput'),
+  // CD 抓轨（音频 CD）：libcdio 读盘 + FFmpeg 编码 FLAC 无损，元数据可查 MusicBrainz
+  // 设备名按平台归一：Windows 盘符 "E:"、macOS "/dev/rdiskN"、Linux "/dev/srN"
+  cdListDrives: () => ipcRenderer.invoke('ffgui:cd-list-drives'),
+  // 探测：读 TOC 得到轨列表、MusicBrainz DiscID 与 toc 查询串（不读音频数据）
+  cdProbe: (device) => ipcRenderer.invoke('ffgui:cd-probe', device),
+  // 元数据查询：toc -> 候选发行列表；releaseId -> 逐曲信息
+  cdLookup: (toc) => ipcRenderer.invoke('ffgui:cd-lookup', toc),
+  cdReleaseTracks: (releaseId) => ipcRenderer.invoke('ffgui:cd-release-tracks', releaseId),
+  cdStart: (job) => ipcRenderer.invoke('ffgui:cd-start', job),
+  cdCancel: (jobId) => ipcRenderer.invoke('ffgui:cd-cancel', jobId),
+  onCdEvent: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('ffgui:cd-event', listener);
+    return () => ipcRenderer.removeListener('ffgui:cd-event', listener);
+  },
+
+  // 屏幕录制（渲染进程 getDisplayMedia + MediaRecorder 采集编码，分块写入主进程）  recordPickOutput: () => ipcRenderer.invoke('ffgui:recordPickOutput'),
   // 开始写盘：主进程显式创建输出文件流（同路径在录则报错，杜绝截断文件）
   recordStart: (targetPath) => ipcRenderer.invoke('ffgui:recordStart', targetPath),
   recordWriteChunk: (targetPath, buf) => ipcRenderer.invoke('ffgui:recordWriteChunk', targetPath, buf),

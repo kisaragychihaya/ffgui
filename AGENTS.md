@@ -4,7 +4,7 @@
 
 ## 项目概览
 
-FFGui 是基于 Electron 的桌面音视频工具箱（GUI for FFmpeg），LGPL-3.0-or-later，界面语言简体中文。六个功能：音视频转码、合并、截取（无损切 + 抓帧）、画面裁剪（可视化画框）、屏幕录制、光盘抓取。
+FFGui 是基于 Electron 的桌面音视频工具箱（GUI for FFmpeg），LGPL-3.0-or-later，界面语言简体中文。七个功能：音视频转码、合并、截取（无损切 + 抓帧）、画面裁剪（可视化画框）、屏幕录制、光盘抓取（DVD/蓝光）、CD 抓轨（音乐 CD → FLAC）。
 
 内置 ffmpeg 在主进程完成实际处理：能力探测（硬件加速/编码器/封装，带缓存）、文件对话框、spawn 子进程解析 `-progress`；渲染进程是纯静态 HTML/CSS/JS。录屏采集与编码在渲染进程（系统选择器 + MediaRecorder），仅结果转 MP4 走 ffmpeg。
 
@@ -32,6 +32,23 @@ main/disc.js        光盘抓取编排（Rust 侧车 + 内部 FFmpeg 转码）�
                     MP4 模式强制 AAC 且每个标题必须显式选择不保留字幕（防静默丢轨）
 main/disc-sidecar.js NDJSON 客户端：spawn 侧车、stdout 分帧/粘包、终态（result/error）判定、
                     cancel 宽限 + 强制 kill、stderr 有界诊断
+main/cdrip.js      CD 抓轨（音乐 CD → FLAC 无损）。注册 ffgui:cd-list-drives / cd-probe /
+                    cd-lookup / cd-release-tracks / cd-start / cd-cancel，事件通道
+                    ffgui:cd-event；同时只允许一个 cd 任务。读盘走 FFmpeg 的 libcdio 输入
+                    设备（不经 Rust 侧车），libcdio 用 avpriv_new_chapter 把每轨建成一个
+                    章节，故 TOC 由解析 `-i <device>` 的 stderr 得到（-frames:a 0 只读头部，
+                    不抓音频）。设备名按平台归一：Windows 盘符 "E:"（libcdio 只认两位形态，
+                    "\\.\CdRom0" 打不开）、macOS "/dev/rdiskN"、Linux "/dev/srN"。逐轨抓取为
+                    `-ss <起> -i <device> -t <时长> -c:a flac`（-ss 前置走 read_seek 快速定位，
+                    避免从头读整盘），写 .ffgui-partial 成功后改名；取消时 kill 子进程并清理。
+                    只传 -n 不传 -y（两者互斥会让 ffmpeg 直接失败）。CD 参数锁定
+                    s16/44100/立体声；压缩级别 0–12 白名单；cdparanoia 纠错五档
+                    （disable/verify/overlap/neverskip/full）。MusicBrainz DiscID 按 libdiscid
+                    算法自算（槽位 0 = lead-out、其后各轨起始帧、固定 100 槽位，base64 字母表
+                    A-Za-z0-9._），与官方测试向量逐位一致；查询用 /ws/2/discid/?toc=...，
+                    逐曲信息用 /ws/2/release/<id>?inc=recordings+artist-credits。元数据经
+                    -metadata 传 Vorbis comment，专辑级字段 + 每轨覆盖（逐轨优先）。
+                    三平台都要求内置 ffmpeg 带 --enable-libcdio（macOS 自建构建需显式开启）
 main/theme.js       主题持久化（system/light/dark）到 userData/config.json 的 theme 字段，经
                     nativeTheme.themeSource 强制全局生效；IPC ffgui:theme-get / ffgui:theme-set
                     （校验合法性 → 持久化 → 改 themeSource → 广播 ffgui:theme-changed）
@@ -49,10 +66,11 @@ preload/preload.js  contextBridge 暴露 window.ffgui：platform、versions、ge
                     getDesktopSources、prepareDesktopSource、pathToFileUrl、getTheme、setTheme、
                     onThemeChanged、i18n（同步取回的词典快照）、setLanguage、onLanguageChanged、
                     discPickSource、discPickKeydb、discListDrives、discProbe、
-                    discStart、discCancel、onDiscEvent。除主题、语言与光盘外与主进程 IPC 同名；
-                    新增 IPC 只在此暴露最小 API
+                    discStart、discCancel、onDiscEvent、cdListDrives、cdProbe、cdLookup、
+                    cdReleaseTracks、cdStart、cdCancel、onCdEvent。除主题、语言与光盘 /
+                    CD 抓轨外与主进程 IPC 同名；新增 IPC 只在此暴露最小 API
 html/*.html         index（首页导航卡片 + 清除硬件信息缓存按钮）、convert、merge、clip、crop、
-                    record、disc。CSP 统一为 default-src 'self'; style-src 'self';
+                    record、disc、cdrip。CSP 统一为 default-src 'self'; style-src 'self';
                     script-src 'self'；clip/crop/record 额外放行 media-src 'self' blob: file:，
                     record 另放行 img-src 'self' data:（来源缩略图）
 html/js/index.js    首页视图切换与清缓存
@@ -95,6 +113,13 @@ html/js/record.js   录屏页：desktopCapturer 缩略图弹窗选来源 → pre
                     声音与麦克风（getUserMedia）可选、双路混音走 AudioContext；MediaRecorder
                     输出 WebM（vp9 优先，画质档映射 videoBitsPerSecond 8/4/2 Mbps），1s 分块
                     串行写入主进程；录制中 beforeunload 拦截离开页面
+html/js/cd.js        CD 抓轨页：cdListDrives 光驱下拉 → cdProbe 读 TOC（不抓音频）→ 可选
+                     cdLookup / cdReleaseTracks 从 MusicBrainz 填标签（联网失败不阻塞，仅记
+                     日志并保留手动填写）→ 勾选曲目并逐首编辑曲名/演唱者 → cdStart 逐轨抓
+                     FLAC。进度经 onCdEvent（progress 按本轨 -t 时长换算百分比）。盘上不可信
+                     字符串（DiscID、曲名、专辑名）一律 textContent 写入，绝不拼 HTML；渲染层
+                     只传设备名与轨号，FFmpeg 命令行由主进程拼装。纠错/压缩档位与主进程白名单
+                     一一对应（scripts/cd-ui.test.cjs 校验）
 html/css/style.css  全部页面共用样式
 bin/                内置 ffmpeg。Windows 只带 ffmpeg.exe 单文件（约 140–210MB，ffprobe 未被
                     使用故不带），打包后到 resources/ 根目录（getFfmpegPath 优先
@@ -267,7 +292,9 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
   （NSIS 安装器架构无关，由 x64 makensis 交叉编译 arm64 内容）
 - macOS：下载 kisaragychihaya/ffmpeg_build_mac 最新 release 的 macos-arm64-static tar.gz，
   `bin/` 与 `lib/` 原样放入项目 `bin/` 并 `chmod +x`；cargo 构建侧车到 `bin/disc/ffgui-disc`；
-  打包后用 ditto 压缩为 `FFGui-macos-arm64.zip`；Release 触发时同样上传
+  打包后用 ditto 压缩为 `FFGui-macos-arm64.zip`；Release 触发时同样上传。
+  **CD 抓轨要求该构建带 `--enable-libcdio`**（工作流 configure 里显式开启，未开则
+  macOS 上读不出 CD 的 TOC）
 - 仓库不提交 `bin/ffmpeg.exe` 等大文件，CI 每次现下；NSISBI 编译器同样不入库，构建时从 v0.1
   Release 资源下载解压
 
@@ -339,20 +366,32 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
 - 光盘抓取限制：物理光驱代码已接入（open_scan/DiscSession）但未真机验证，本机无光驱；AACS
   keydb 需用户自备本地 KEYDB.cfg，在线密钥服务禁用；BD+ 盘未验证；`bin/disc/ffgui-disc.exe`
   （约 9.5MB，已启用 strip/LTO）随 extraResource 分发，三个 CI 平台均先构建对应架构侧车再打包
+- CD 抓轨限制：**必须内置带 `--enable-libcdio` 的 ffmpeg**，否则光驱枚举后仍读不出 TOC
+  （Windows 的 gyan full_build 已带；macOS 自建构建需在 configure 里显式加
+  `--enable-libcdio`；Linux 取决于系统 ffmpeg）。未真机验证（本机无光驱），仅
+  `scripts/cdrip.test.cjs` 以 mock spawn 覆盖了 TOC 解析、DiscID、参数组装与取消清理。
+  MusicBrainz 查询需联网；查询失败不阻塞抓轨（保留手动填写）。CD 抓轨与光盘抓取是两个
+  独立入口：前者走 `main/cdrip.js`（FFmpeg libcdio，输出 FLAC），后者走
+  `main/disc.js` + Rust 侧车（DVD/BD，输出 MKV/MP4），互不复用对方的单任务锁
 
 ## 测试方式
 
-`npm test` 跑 `scripts/regression.test.cjs` + `scripts/i18n.test.cjs`，生成独立临时媒体并自动清理；
+`npm test` 跑 `scripts/regression.test.cjs` + `scripts/i18n.test.cjs` + `scripts/cdrip.test.cjs`
++ `scripts/cd-ui.test.cjs`，生成独立临时媒体并自动清理；
 侧车/页面专项用
 `node --test scripts/disc.test.cjs scripts/disc-sidecar.test.cjs scripts/disc-ui.test.cjs`，
 Rust 侧车 `cd native/ffgui-disc && cargo test --locked`。`disc-ui.test.cjs` 用 vm 抽取
 `html/js/disc.js` 的「纯逻辑」段求值，并注入真实 `locales/zh-CN.json` 作为 `window.i18n.t`，
-因此它同时校验用户看到的中文原文。`regression.test.cjs`、`disc.test.cjs` 用 vm 加载主进程文件时，
-`require` 桩需把 `'./i18n'` 映射到 `main/i18n.js`（否则沙箱里解析不到同目录模块）。
+因此它同时校验用户看到的中文原文；`cd-ui.test.cjs` 对 `html/js/cd.js` 同样处理。
+`regression.test.cjs`、`disc.test.cjs` 用 vm 加载主进程文件时，
+`require` 桩需把 `'./i18n'` 映射到 `main/i18n.js`（否则沙箱里解析不到同目录模块）；
+`cdrip.test.cjs` 还需把 `'./ffmpeg'` 映射到返回假路径的桩，并 mock
+`child_process.spawn`（否则测试会去调真实 ffmpeg / 光驱）。
 多语言改动后另需 `npm start` 逐页切换语言核对（含主进程报错与文件对话框标题）。手工验证：
 `npm start` 后用 `test_media/` 示例文件走一遍转码（含拖拽、取消、进度），观察主进程 `[ffgui]` /
 `[ffmpeg]` 日志；录屏页验证录制（含系统声音/麦克风勾选、取消清理半成品、转 MP4）；
-光盘页验证 ISO/目录的探测、选轨、抓取与取消（需真实光盘环境）。
+光盘页验证 ISO/目录的探测、选轨、抓取与取消（需真实光盘环境）；
+CD 抓轨页验证光驱枚举、读 TOC、MusicBrainz 查询与填充、逐轨抓 FLAC 与取消（需真实音乐 CD）。
 
 ## 音轨与输出规则（修复后）
 

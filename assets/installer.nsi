@@ -59,12 +59,6 @@ LangString SECTION_MAIN   ${LANG_TRADCHINESE} "主程式"
 LangString SECTION_MAIN   ${LANG_JAPANESE}    "メインプログラム"
 LangString SECTION_MAIN   ${LANG_KOREAN}      "주 프로그램"
 
-LangString SECTION_UNINST ${LANG_ENGLISH}    "Uninstall"
-LangString SECTION_UNINST ${LANG_SIMPCHINESE} "卸载"
-LangString SECTION_UNINST ${LANG_TRADCHINESE} "解除安裝"
-LangString SECTION_UNINST ${LANG_JAPANESE}    "アンインストール"
-LangString SECTION_UNINST ${LANG_KOREAN}      "제거"
-
 LangString RUN_TEXT       ${LANG_ENGLISH}    "Run ${APP_NAME}"
 LangString RUN_TEXT       ${LANG_SIMPCHINESE} "运行 ${APP_NAME}"
 LangString RUN_TEXT       ${LANG_TRADCHINESE} "執行 ${APP_NAME}"
@@ -130,7 +124,11 @@ Section "$(SECTION_MAIN)" SEC_INSTALL
 SectionEnd
 
 ; =============================================================
-Section "$(SECTION_UNINST)"
+; 卸载段：段名必须**字面量**写成 "Uninstall"（大小写不敏感）。
+; NSIS 只按段名把这一节归给卸载器（WriteUninstaller 收集的就是它）；一旦改成
+; LangString 或别的名字，它会被当成普通安装段，装完后紧接着执行卸载逻辑——
+; 结果是刚装好的文件、快捷方式、卸载注册表项被通通删掉（安装程序仍返回退出码 0）。
+Section "Uninstall"
   ; 先结束正在运行的应用进程，否则 FFGui.exe 被占用会导致删除失败、目录残留
   nsExec::Exec "taskkill /F /IM ${APP_EXE} /T"
   Pop $0

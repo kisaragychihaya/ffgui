@@ -147,10 +147,14 @@ assets/installer.nsi NSIS 脚本：MUI2 现代界面（欢迎/许可证[须同�
                     临时占用重试一次；中文产品名/路径由构建时生成的 UTF-8 BOM defines.nsh 注入
                     **多语言**：MUI_LANGUAGE 依次 English / SimpChinese / TradChinese / Japanese /
                     Korean，NSIS 按系统显示语言（$LANGUAGE 启动值）自动选，系统语言不在列表时
-                    用第一个 ⇒ English 放最前即「兜底英文」；自定义文案（主程序/卸载/运行/品牌行/
-                    卸载快捷方式名）全部用 LangString，新增语言要补全这 5 组；产品名 ${APP_NAME}
+                    用第一个 ⇒ English 放最前即「兜底英文」；自定义文案（主程序/运行/品牌行/
+                    卸载快捷方式名）全部用 LangString，新增语言要补全这 4 组；产品名 ${APP_NAME}
                     是品牌名，各语言保持一致（安装目录与快捷方式路径因此不随语言变化）；
-                    想加手动语言选择框就插 !insertmacro MUI_LANGDLL_DISPLAY（当前不插 = 全自动）
+                    想加手动语言选择框就插 !insertmacro MUI_LANGDLL_DISPLAY（当前不插 = 全自动）。
+                    **卸载段的段名必须字面量写 "Uninstall"**，不能改成 LangString/别的名字：
+                    NSIS 仅凭段名把该节归给卸载器，改名后它会作为普通安装段在装完后立刻执行
+                    （删除文件/快捷方式/卸载注册表项），且安装程序仍返回退出码 0 ⇒ 表现为
+                    「装完没有快捷方式、程序目录只剩 FFGui.exe」（v0.6.1 曾因此翻车）
 scripts/build-installer.cjs  编译安装包：调用 tools/nsisbi/makensis.exe；也可独立运行
                     node scripts/build-installer.cjs --app-dir out/FFGui-win32-x64 [--arch arm64]
                     （CI 即此用法）；先复制 installer.nsi 并补 UTF-8 BOM（makensis 把无 BOM
@@ -329,7 +333,8 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
   （校验键集合、占位符、HTML/JS 引用、页面加载顺序、preload 暴露面）
 - **安装包界面是另一套**：`assets/installer.nsi` 用 NSIS 的 `LangString` + `MUI_LANGUAGE`，
   同样是五种语言、按系统显示语言自动选、兜底英文（English 放最前），与 `locales/` 无关；
-  加新界面文案要同时补 5 组 LangString
+  加新界面文案要同时补 4 组 LangString（主程序/运行/品牌行/卸载快捷方式名）；
+  **卸载段的段名必须写成字面量 `Section "Uninstall"`**（理由见上节），不要"顺手"本地化
 
 ## 安全注意事项
 

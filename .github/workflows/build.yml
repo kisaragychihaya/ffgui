@@ -69,6 +69,42 @@ jobs:
       - name: 生成 NSIS 安装包
         run: node scripts/build-installer.cjs --app-dir out/FFGui-win32-x64 --arch x64
 
+      # 安装包冒烟测试：静默装到临时目录，确认「装完东西还在」。
+      # 卸载段若被写成非字面量 "Uninstall" 的段名，NSIS 会把它当普通安装段在装完后立刻执行，
+      # 文件/快捷方式/卸载项被删光而退出码仍是 0 —— 只有真装一次才能发现。
+      - name: 安装包冒烟测试（安装 → 校验快捷方式与文件 → 卸载）
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem out/make -Recurse -Filter 'FFGui-*-x64-Setup.exe' |
+            Select-Object -First 1
+          if (-not $setup) { throw '未找到 x64 安装包' }
+          $dir = Join-Path $env:RUNNER_TEMP 'ffgui-smoke'
+          Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList '/S', "/D=$dir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "安装程序退出码 $($p.ExitCode)" }
+
+          foreach ($f in @('FFGui.exe', 'uninstall.exe', 'resources\app.asar')) {
+            if (-not (Test-Path (Join-Path $dir $f))) {
+              throw "安装后缺少 $f —— 卸载段可能被当成安装段执行了"
+            }
+          }
+          $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) '狒狒格式工具箱.lnk'
+          if (-not (Test-Path $lnk)) { throw "未创建桌面快捷方式：$lnk" }
+          $menu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\狒狒格式工具箱'
+          if (-not (Test-Path $menu)) { throw "未创建开始菜单目录：$menu" }
+          if ((Get-ChildItem $menu -Filter *.lnk).Count -lt 2) { throw '开始菜单缺少主程序/卸载快捷方式' }
+          if (-not (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ffgui' -ErrorAction SilentlyContinue)) {
+            throw '未写入卸载注册表项'
+          }
+          Write-Host '安装阶段校验通过'
+
+          # 卸载器会把自己复制到临时目录再执行，-Wait 可能提前返回，故轮询等待
+          Start-Process -FilePath (Join-Path $dir 'uninstall.exe') -ArgumentList '/S' -Wait
+          for ($i = 0; $i -lt 30 -and (Test-Path (Join-Path $dir 'FFGui.exe')); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path (Join-Path $dir 'FFGui.exe')) { throw '卸载后仍残留安装目录' }
+          if (Test-Path $lnk) { throw '卸载后仍残留桌面快捷方式' }
+          Write-Host '安装包冒烟测试通过'
+
       - name: 压缩产物
         shell: pwsh
         run: 7z a FFGui-windows-x64.7z ./out/FFGui-win32-x64 | Out-Null

@@ -104,7 +104,8 @@ function build({ appDir, outDir, arch }) {
   const outFile = path.join(outDir, `FFGui-${version}${suffix}-Setup.exe`);
 
   // 中文产品名等含非 ASCII 字符，写入 defines.nsh 时带 UTF-8 BOM（NSIS Unicode 解析需要）。
-  // 界面文案（主程序/卸载/运行/品牌行）已改为 installer.nsi 里的 LangString，按语言自动选择
+  // 界面文案（主程序/运行/品牌行/卸载快捷方式名）已改为 installer.nsi 里的 LangString，
+  // 按语言自动选择；卸载段名本身必须保持字面量 "Uninstall"（见 assets/installer.nsi 注释）
   const defines = [
     `!define APP_NAME "${APP_NAME}"`,
     `!define APP_ID "${APP_ID}"`,

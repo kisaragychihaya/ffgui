@@ -38,6 +38,7 @@ test('设备名归一：三平台各自接受合法形态，拒绝非法形态',
   assert.equal(normalizeDevicePath('E:', 'win32'), 'E:');
   assert.equal(normalizeDevicePath('e:', 'win32'), 'E:');
   assert.equal(normalizeDevicePath('E', 'win32'), 'E:');
+  assert.equal(normalizeDevicePath('e', 'win32'), 'E:');
   assert.equal(normalizeDevicePath('\\\\.\\E:', 'win32'), 'E:');
   // libcdio 的 cdio_is_device_win32 只认两位形态，CdRomN 打不开
   assert.equal(normalizeDevicePath('\\\\.\\CdRom0', 'win32'), '');
@@ -45,14 +46,23 @@ test('设备名归一：三平台各自接受合法形态，拒绝非法形态',
   assert.equal(normalizeDevicePath('C:\\', 'win32'), '');
   assert.equal(normalizeDevicePath('', 'win32'), '');
   // macOS：/dev/diskN 归一为 rdisk（绕过缓存的字符设备）
+  assert.equal(normalizeDevicePath('/dev/disk1', 'darwin'), '/dev/rdisk1');
   assert.equal(normalizeDevicePath('/dev/disk2', 'darwin'), '/dev/rdisk2');
   assert.equal(normalizeDevicePath('/dev/rdisk2', 'darwin'), '/dev/rdisk2');
+  assert.equal(normalizeDevicePath('/dev/disk', 'darwin'), '');
+  assert.equal(normalizeDevicePath('/dev/cdrom', 'darwin'), '');
   assert.equal(normalizeDevicePath('/dev/sr0', 'darwin'), '');
   assert.equal(normalizeDevicePath('E:', 'darwin'), '');
-  // Linux：块设备原样接受
+  // Linux：libfreemkv 枚举出的 sg 字符设备按同号换成 sr 块设备
+  // （libcdio 打不开 sg，sgN 与 srN 是同一光驱）
+  assert.equal(normalizeDevicePath('/dev/sg0', 'linux'), '/dev/sr0');
+  assert.equal(normalizeDevicePath('/dev/sg12', 'linux'), '/dev/sr12');
+  // sr / cdrom / dvd 等块设备与符号链接原样接受
   assert.equal(normalizeDevicePath('/dev/sr0', 'linux'), '/dev/sr0');
   assert.equal(normalizeDevicePath('/dev/cdrom', 'linux'), '/dev/cdrom');
+  assert.equal(normalizeDevicePath('/dev/dvd', 'linux'), '/dev/dvd');
   assert.equal(normalizeDevicePath('sr0', 'linux'), '');
+  assert.equal(normalizeDevicePath('/tmp/sg0', 'linux'), '');
 });
 
 // ---------- TOC 解析 ----------
@@ -650,6 +660,96 @@ test('探测：无光盘时给出 FFGUI_CD_NO_DISC', async () => {
     assert.equal(err.code, 'FFGUI_CD_NO_DISC');
     return true;
   });
+});
+
+// ---------- 光驱枚举（mock 侧车） ----------
+// listCdDrives 定义在 registerCdIpc 内部，只能经 vm 加载捕获
+// ffgui:cd-list-drives handler 来调；侧车 createDiscService 被桩成假实现，
+// electron 桩负责收集 ipcMain.handle 注册的 handler 表。
+
+function loadCdIpcHandlers(options = {}) {
+  const handlers = {};
+  const ctx = {
+    require: (name) => {
+      if (name === 'electron') {
+        return {
+          app: { isPackaged: false, getAppPath: () => repo },
+          ipcMain: { handle: (channel, fn) => { handlers[channel] = fn; } },
+        };
+      }
+      if (name === './i18n') return require(path.join(repo, 'main', 'i18n.js'));
+      if (name === './ffmpeg') {
+        return { getFfmpegPath: () => 'ffmpeg-mock' };
+      }
+      if (name === './disc') {
+        return {
+          createDiscService: () => ({
+            listDrives: options.listDrives || (async () => ({ drives: [] })),
+          }),
+        };
+      }
+      if (name === 'child_process') {
+        return { spawn: () => { throw new Error('光驱枚举不应 spawn ffmpeg'); } };
+      }
+      return require(name);
+    },
+    process, console: { log() {}, error() {} }, module: { exports: {} },
+    __dirname: path.join(repo, 'main'),
+  };
+
+  vm.createContext(ctx);
+  vm.runInContext(
+    fs.readFileSync(path.join(repo, 'main', 'cdrip.js'), 'utf8')
+    + '\nmodule.exports = { registerCdIpc };',
+    ctx,
+  );
+  ctx.module.exports.registerCdIpc();
+  return handlers;
+}
+
+test('光驱枚举：侧车 path 换算为 libcdio 设备名（本机 win32）', async () => {
+  const handlers = loadCdIpcHandlers({
+    listDrives: async () => ({
+      drives: [
+        { kind: 'drive', path: '\\\\.\\E:', label: 'Audio CD' },
+        { kind: 'drive', path: '\\\\.\\F:', label: '' },        // CdRomN 形态 libcdio 打不开，换算为空、整行跳过
+        { kind: 'drive', path: '\\\\.\\CdRom0', label: 'CdRom0' },
+        // label 不是字符串时回退 device，不让界面拿到 undefined
+        { kind: 'drive', path: '\\\\.\\G:' },
+      ],
+    }),
+  });
+  const result = await handlers['ffgui:cd-list-drives']();
+  // vm 里构造的对象原型与本 realm 不同，deepEqual 会误判，按字段断言
+  assert.equal(result.drives.length, 3);
+  assert.equal(result.drives[0].device, 'E:');
+  assert.equal(result.drives[0].label, 'Audio CD');
+  assert.equal(result.drives[0].vendor, '');
+  assert.equal(result.drives[0].model, '');
+  assert.equal(result.drives[1].device, 'F:');
+  // label 是字符串（哪怕是空串）就原样采用，只有非字符串才回退 device
+  assert.equal(result.drives[1].label, '');
+  assert.equal(result.drives[2].device, 'G:');
+  assert.equal(result.drives[2].label, 'G:');
+});
+
+test('光驱枚举：侧车返回结构化 code 时原样透传', async () => {
+  const handlers = loadCdIpcHandlers({
+    listDrives: async () => ({ drives: [], code: 'FFGUI_UNSUPPORTED' }),
+  });
+  const result = await handlers['ffgui:cd-list-drives']();
+  assert.equal(result.drives.length, 0);
+  assert.equal(result.code, 'FFGUI_UNSUPPORTED');
+});
+
+test('光驱枚举：侧车调用抛错时归一为 FFGUI_CD_DRIVES_FAILED', async () => {
+  const handlers = loadCdIpcHandlers({
+    listDrives: async () => { throw new Error('sidecar gone'); },
+  });
+  const result = await handlers['ffgui:cd-list-drives']();
+  assert.equal(result.drives.length, 0);
+  assert.equal(result.code, 'FFGUI_CD_DRIVES_FAILED');
+  assert.equal(result.message, 'sidecar gone');
 });
 
 // ---------- 真实 ffmpeg 集成 ----------

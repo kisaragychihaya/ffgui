@@ -61,7 +61,9 @@ function requiredString(value, field) {
 // - Windows：盘符 "E:"（libcdio win32 驱动的 cdio_is_device_win32 只认
 //   两位形态 "X:"，"\\.\CdRom0" 这类设备路径它并不支持，直接拒绝）
 // - macOS：BSD 原始设备 "/dev/rdiskN"（rdisk 是绕过缓存的字符设备，读 CD 必须用）
-// - Linux：块设备 "/dev/srN" 或 "/dev/cdrom"
+// - Linux：块设备 "/dev/srN" 或 "/dev/cdrom"；libfreemkv 枚举出的是 sg 字符设备
+//   "/dev/sgN"，libcdio 打不开它，先按同号启发式换成 sr 块设备（同一光驱，
+//   sgN 与 srN 编号一致）——该映射尚未真机验证
 function normalizeDevicePath(raw, platform = process.platform) {
   const value = String(raw || '').trim();
   if (!value) return '';
@@ -80,7 +82,11 @@ function normalizeDevicePath(raw, platform = process.platform) {
     if (m) return `/dev/rdisk${m[2]}`;
     return '';
   }
-  // Linux：/dev/sr0、/dev/cdrom、/dev/dvd 等原样接受
+  // Linux：libfreemkv 给的是 sg 字符设备 /dev/sgN，libcdio 打不开，
+  // 按同号启发式换成 sr 块设备（sgN 与 srN 是同一光驱）；该映射未经真机验证。
+  // 只映射 sg 前缀 + 纯数字后缀，/dev/sr0、/dev/cdrom、/dev/dvd 等原样通过
+  const sg = value.match(/^\/dev\/sg(\d+)$/);
+  if (sg) return `/dev/sr${sg[1]}`;
   return /^\/dev\/[\w.-]+$/.test(value) ? value : '';
 }
 
@@ -865,7 +871,7 @@ function createCdService(options = {}) {
 // ---------- IPC 注册 ----------
 
 // 枚举本机光驱。复用光盘抓取的 Rust 侧车（libfreemkv 每平台 sysfs / IOKit /
-// SetupAPI 遍历 + 一次 INQUIRY），把上游的 display_name 换算成 libcdio 能认的
+// SetupAPI 遍历 + 一次 INQUIRY），把侧车条目里的 path 换算成 libcdio 能认的
 // 设备名：Windows 的 "E:"、macOS 的 "/dev/rdiskN"、Linux 的 "/dev/srN"。
 // 侧车不可用或平台不支持时返回结构化原因，界面据此引导用户改走 ISO 镜像。
 function registerCdIpc() {
@@ -885,11 +891,11 @@ function registerCdIpc() {
       }
       const drives = [];
       for (const entry of (result && result.drives) || []) {
-        const device = normalizeDevicePath(
-          entry && typeof entry.displayName === 'string' ? entry.displayName : '');
-        // display_name 可能是卷标而非设备路径（Windows 已由上游换算为盘符，
-        // macOS 的 display_name 是 diskN、path 是 ioreg: 选择器），
+        // 侧车每个条目只产出 kind/path/label：path 是设备路径
+        // （Windows 为 "\\.\E:" 形态，"\\.\CdRom0" 换算为空、被跳过属预期；
+        // label 仅供界面展示，不保证是设备路径）。
         // 换算不出合法 libcdio 设备名的条目直接跳过，不让界面选中后必然失败。
+        const device = normalizeDevicePath(entry && typeof entry.path === 'string' ? entry.path : '');
         if (!device) continue;
         drives.push({
           device,

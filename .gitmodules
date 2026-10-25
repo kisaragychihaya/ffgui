@@ -1,0 +1,3 @@
+[submodule "native/qwentts.cpp"]
+	path = native/qwentts.cpp
+	url = https://github.com/kisaragychihaya/qwentts.cpp.git

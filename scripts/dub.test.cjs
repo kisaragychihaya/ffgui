@@ -1294,6 +1294,10 @@ test('模型下载：aria2c 可用时走 aria2（-c 续传参数、readout 进�
     `${dub.talkerFileName('Q8_0')}${'.ffgui-partial'}`,
     '先写 .partial',
   );
+  // 多连接切片：16 连接 + 16 切片 + 最小切片 1M（aria2 的切片下限）
+  assert.equal(talkerArgs[talkerArgs.indexOf('-x') + 1], '16', '每服务器最大连接数');
+  assert.equal(talkerArgs[talkerArgs.indexOf('-s') + 1], '16', '切片数');
+  assert.equal(talkerArgs[talkerArgs.indexOf('-k') + 1], '1M', '最小切片大小');
   for (const flag of [
     '--file-allocation=none',
     '--max-tries=0',

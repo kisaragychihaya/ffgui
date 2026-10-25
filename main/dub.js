@@ -1325,6 +1325,11 @@ function createDubService(options = {}) {
     }
     const args = [
       '-c',
+      // 多连接切片：模型主机（HF / hf-mirror）都支持 Range，16 连接能明显吃满带宽；
+      // -k 1M 是 aria2 允许的最小切片下限，避免切片过小反而降低吞吐
+      '-x', '16',
+      '-s', '16',
+      '-k', '1M',
       '-d', path.dirname(target),
       '-o', path.basename(target),
       '--file-allocation=none',

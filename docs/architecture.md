@@ -56,7 +56,8 @@ main/dub.js         字幕配音（dub）：spawn 本地 TTS 引擎 tts-server�
                     CI 提供：Windows 取 aria2 官方 x64 构建（WOA 靠 Win11 模拟执行），
                     macOS 在 runner 上原生编静态 OpenSSL 版本，编译/下载失败只警告；
                     aria2 路径用
-                    -c 断点续传，取消/失败保留 .ffgui-partial 与 .aria2 控制文件；
+                    -c 断点续传 + 多连接切片（-x 16 -s 16 -k 1M，吃到满带宽且切片不小于
+                    1MB），取消/失败保留 .ffgui-partial 与 .aria2 控制文件；
                     一次下载内不切换实现；引擎缺失或
                     启动失败要给可读提示，不能静默产出无人声的结果；取消需 kill 引擎子进程并
                     清理临时音频与半成品

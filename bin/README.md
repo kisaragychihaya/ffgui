@@ -112,6 +112,9 @@ ggml.dll / ggml-base.dll / ggml-cpu.dll，Vulkan 版另有 ggml-vulkan.dll，合
 字幕配音的模型下载优先用 aria2c（`-c` 断点续传，取消/失败保留半成品），`main/dub.js` 的
 `resolveAria2` 按「注入 → `FFGUI_ARIA2` → 内置 `bin/aria2/` → PATH 探测」找它，
 全都没有时回退内置 https 下载（功能可用，但没有断点续传）。
+下载时开多连接切片（`-x 16 -s 16 -k 1M`）：模型主机都支持 Range，16 连接能明显吃满带宽，
+`-k` 取 aria2 允许的最小切片 1MB，避免切片过碎反而变慢；多连接与 `-c` 续传兼容
+（续传时只补未完成的切片）。
 
 - 位置约定（开发态都是本目录下的 `aria2/`，打包后由 forge 的 extraResource 分发）：
   - Windows（x64 / arm64）：`bin/aria2/aria2c.exe` → 打包后 `resources/aria2/aria2c.exe`

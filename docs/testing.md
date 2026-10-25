@@ -18,6 +18,9 @@ Vivian，服务层再验一次非法说话人不报错照常配音）；配音�
 （mix = true）自带 -filter_complex，该判据不适用，按「args 最后一个元素 = 输出路径」定位）；
 混音模式另有专项：argv 含 `[1:a]volume=<dB>dB` + `amix=inputs=2:duration=longest:normalize=0`
 + `-ac 2`、只有一次 `-c:a`、无 `-map 1:a:0` 与多轨 disposition、源无音轨时退化为单配音轨，
+映射表按输出容器断言——MKV 为 `['0:v','[mixout]','0:s?','0:t?']` 且带 `-c:t copy`
+（keepSubtitle=false 时附件仍带），MP4 明确不带 `0:t?` / `-c:t`（MP4 无附件概念，硬 map 会
+让 muxer 报 codec not currently supported in container），
 validateDubJob 的 mix（只认布尔 true）/ mixVolumeDb（越界钳制到 -30~+12、非数值回 0），服务层
 再验混音成功（回探期望 1 条）与回探到 2 条时报 FFGUI_DUB_MUX；dub 页的纯逻辑 UI 测试文件
 （`scripts/dub-ui.test.cjs`，仿 `cd-ui.test.cjs` 注入真实 `locales/zh-CN.json`）尚未建立，
@@ -118,5 +121,10 @@ aria2c 时，应自动回退内置 https 下载）、
   mov_text、其余 `-c:s copy`（混音分支用 `-map 0:s?`）。因此**源字幕是 mov_text 的 MP4 转 MKV
   会失败**（matroska 不支持 mov_text，报 `Subtitle codec mov_text is not supported`）——实测
   混音与多轨两个分支都一样，属既有行为，真要转化得改 `-c:s copy` 为按容器挑文本字幕编码器
-  （图片字幕 PGS/VobSub 又要另走一路）。体积：Vulkan 版约 41MB
+  （图片字幕 PGS/VobSub 又要另走一路）。**附件流（attachment，含字体）只有 MKV 能装**：混音分支
+  因为不再 `-map 0`，会显式 `-map 0:t?` + `-c:t copy` 保留（实测 MKV→MKV 字体附件字节一致），
+  但 MP4 输出刻意不 map——硬 map 会让 mp4 muxer 报 `codec not currently supported in
+  container` 直接失败，所以 MKV 源混音输出 MP4 时行为是「成功但丢附件」。多轨分支（`-map 0`
+  + `-c copy`）在同样场景（MKV 带附件 → MP4）今天就会失败，仍属既有问题，未在本次改动范围内修。
+  体积：Vulkan 版约 41MB
   （其中 `ggml-vulkan.dll` 38MB，含编译好的 shader），CPU 版约 2.5MB，安装包随之增大

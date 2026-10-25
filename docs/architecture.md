@@ -81,8 +81,14 @@ main/dub.js         字幕配音（dub）：spawn 本地 TTS 引擎 tts-server�
                     混音模式（mix = true 且源有音轨）改走 buildDubMixArgs：
                     -filter_complex "[1:a]volume=<dB>dB[dub];[0:a:0][dub]amix=inputs=2:
                     duration=longest:normalize=0[mixout]"，只调配音侧（mixVolumeDb 归一为
-                    -30~+12 dB，越界钳制、非数值回 0），-map 0:v + -map [mixout]（+ 字幕）
-                    -c:v copy -c:a aac -ar 48000 -ac 2，源音轨不再单独存在、播放器里关不掉；
+                    -30~+12 dB，越界钳制、非数值回 0），-map 0:v + -map [mixout] + -map 0:s?
+                    + -map 0:t?（附件流，仅 MKV）+ -c:v copy -c:a aac -c:t copy -ar 48000 -ac 2，
+                    源音轨不再单独存在、播放器里关不掉；混音分支没有 -map 0 兜底，字幕流与附件流
+                    （attachment，含字幕用的字体）必须显式 map，否则 MKV 的字体会整批丢掉、
+                    字幕回退系统字体；两条 map 都带问号，源没有对应流也不报错。附件只在
+                    ATTACHMENT_CONTAINERS（mkv）里带：MP4/MOV 没有附件概念，硬 map 进去 muxer
+                    会报 "codec not currently supported in container" 使整个任务失败（实测），
+                    故 MKV 源混音输出 MP4 时会丢掉附件但仍成功。
                     normalize=0 是因为音量已由 dB 精确控制，amix 默认的按路数归一化会二次压低。
                     源本来没有音轨时 mix 无从谈起，仍走多轨分支（那本来就只有配音一条）。
                     三步自检不可省，宁可报错也不交废成品：

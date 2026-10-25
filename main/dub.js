@@ -668,9 +668,16 @@ function pushSubtitleArgs(args, { ext, keepSubtitle }) {
   }
 }
 
+// 能装附件流（attachment，含字幕用的字体）的容器：只有 matroska 系。MP4/MOV 没有
+// 附件这个概念，把附件流 map 进去 muxer 会直接失败（实测：MKV 源带字体附件混音输出
+// MP4 报 "Could not find tag for codec ... not currently supported in container"，
+// 整个任务失败；不 map 则成功、只是丢了附件）。故是否带附件由输出容器决定。
+const ATTACHMENT_CONTAINERS = new Set(['mkv']);
+
 // 混音分支：源音轨与配音轨经 amix 合成唯一一条音轨输出。
-// 与多轨分支的差别全在容器选项里：没有 -map 0（源音轨不再保留），map 的是滤镜标签，
-// 也没有 -c copy（音频必须重编码）。结果就是播放器里只有一条音轨，无法再切回纯原声。
+// 与多轨分支的差别在容器选项里：没有 -map 0（源音轨不再保留），map 的是滤镜标签，
+// 也没有 -c copy（音频必须重编码）。结果就是播放器里只有一条音轨，无法再切回纯原声；
+// 因此原本靠 -map 0 顺带保留的附件流要单独 map（见 keepAttachments）。
 function buildDubMixArgs({ video, audioWav, outPath, keepSubtitle, language, title, volumeDb }) {
   const ext = path.extname(outPath).toLowerCase().replace(/^\./, '');
   const filter = [
@@ -682,6 +689,8 @@ function buildDubMixArgs({ video, audioWav, outPath, keepSubtitle, language, tit
     // 两路采样率/声道不同由 amix 前的自动转换统一，输出再按 -ar/-ac 落成 48kHz 立体声。
     '[0:a:0][dub]amix=inputs=2:duration=longest:normalize=0[mixout]',
   ].join(';');
+  // 附件流（含有字体）：MKV 的字幕靠它取字体，丢了会回退系统字体
+  const keepAttachments = ATTACHMENT_CONTAINERS.has(ext);
   const args = [
     '-hide_banner',
     '-i', video,
@@ -693,6 +702,9 @@ function buildDubMixArgs({ video, audioWav, outPath, keepSubtitle, language, tit
   ];
   // 字幕照旧带上（-map 0:s? 的问号让没有字幕的源不报错）
   if (keepSubtitle) args.push('-map', '0:s?');
+  // 附件同样要显式 map（混音分支没有 -map 0 兜底）。问号让没有附件的源不报错；
+  // MP4 输出不 map，见 ATTACHMENT_CONTAINERS 的注释
+  if (keepAttachments) args.push('-map', '0:t?');
   args.push(
     '-c:v', 'copy',
     '-c:a', 'aac',
@@ -704,6 +716,8 @@ function buildDubMixArgs({ video, audioWav, outPath, keepSubtitle, language, tit
     '-metadata:s:a:0', `title=${title || t('main.dub.trackTitle')}`,
   );
   pushSubtitleArgs(args, { ext, keepSubtitle });
+  // 附件流没有编码器，只能原样复制（-c:t copy）
+  if (keepAttachments) args.push('-c:t', 'copy');
   // 唯一一条音轨即默认轨（单轨没有别人的 default 要摘）
   args.push('-disposition:a:0', 'default');
   args.push('-n', '-nostats', '-progress', 'pipe:1', outPath);

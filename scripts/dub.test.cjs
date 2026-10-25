@@ -333,10 +333,12 @@ test('混音：源有音轨时用 volume + amix 合成唯一音轨，不再保�
   // normalize=0：不做二次归一（否则 amix 会把两路一起压低）
   assert.ok(!filter.includes('normalize=1'), filter);
 
-  // 映射：画面 + 混音结果（+ 字幕），源音轨不再单独 map
-  assert.equal(args[args.indexOf('-map') + 1], '0:v');
-  assert.equal(args[args.indexOf('-map', args.indexOf('-map') + 1) + 1], '[mixout]');
-  assert.equal(args[args.indexOf('-map', args.indexOf('[mixout]')) + 1], '0:s?');
+  // 映射：画面 + 混音结果 + 字幕；源音轨不再单独 map。MP4 没有附件概念，
+  // 不带 -map 0:t?（带了 muxer 会报 codec not currently supported in container）
+  const maps = args.reduce((acc, arg, i) => (arg === '-map' ? acc.concat(args[i + 1]) : acc), []);
+  assert.deepEqual(maps, ['0:v', '[mixout]', '0:s?']);
+  assert.ok(!args.includes('0:t?'), 'MP4 输出不映射附件流');
+  assert.ok(!args.includes('-c:t'), 'MP4 输出不设附件编码器');
   assert.ok(!args.includes('1:a:0'), '混音分支不该再 map 配音轨为独立音轨');
   assert.ok(!args.some((arg) => arg === '-map' && args[args.indexOf(arg) + 1] === '0'),
     '混音分支不该用 -map 0 保留源全部流');
@@ -357,7 +359,7 @@ test('混音：源有音轨时用 volume + amix 合成唯一音轨，不再保�
   assert.equal(args[args.length - 1], '/v/a_dub.mp4');
 });
 
-test('混音：音量恒写出来（0 dB 也写），MKV 用 BCP 47 码且字幕原样复制', () => {
+test('混音：音量恒写出来（0 dB 也写），MKV 用 BCP 47 码且字幕/附件原样复制', () => {
   const args = dub.buildDubMuxArgs({
     video: '/v/a.mkv', audioWav: '/tmp/dub.wav', outPath: '/v/a_dub.mkv', sourceAudioCount: 2,
     language: 'chinese', mix: true,
@@ -369,6 +371,20 @@ test('混音：音量恒写出来（0 dB 也写），MKV 用 BCP 47 码且字幕
   assert.ok(filter.includes('[0:a:0]'), filter);
   assert.equal(args[args.indexOf('-metadata:s:a:0') + 1], 'language=zh');
   assert.equal(args[args.indexOf('-c:s') + 1], 'copy');
+  // MKV 能装附件流（attachment，含字幕用的字体）：混音分支没有 -map 0 兜底，
+  // 必须显式 map 并原样复制，否则字体整批丢掉
+  const maps = args.reduce((acc, arg, i) => (arg === '-map' ? acc.concat(args[i + 1]) : acc), []);
+  assert.deepEqual(maps, ['0:v', '[mixout]', '0:s?', '0:t?']);
+  assert.equal(args[args.indexOf('-c:t') + 1], 'copy');
+  // 不保留字幕时附件仍要带上（字体与字幕是两件事）
+  const noSubMkv = dub.buildDubMuxArgs({
+    video: '/v/a.mkv', audioWav: '/tmp/dub.wav', outPath: '/v/a_dub.mkv', sourceAudioCount: 1,
+    mix: true, keepSubtitle: false,
+  });
+  const noSubMaps = noSubMkv.reduce((acc, arg, i) => (arg === '-map' ? acc.concat(noSubMkv[i + 1]) : acc), []);
+  assert.deepEqual(noSubMaps, ['0:v', '[mixout]', '0:t?']);
+  assert.equal(noSubMkv[noSubMkv.indexOf('-c:t') + 1], 'copy');
+  assert.ok(noSubMkv.includes('-sn'));
   // 不保留字幕：不带字幕 map，并显式 -sn
   const noSub = dub.buildDubMuxArgs({
     video: '/v/a.mp4', audioWav: '/tmp/dub.wav', outPath: '/v/a_dub.mp4', sourceAudioCount: 1,

@@ -376,7 +376,7 @@ test('引擎路径：环境变量优先，Windows 开发/打包路径不同，Li
   assert.equal(dub.getTtsServerPath({ env: {}, platform: 'linux', app: { getAppPath: () => path.join(root, 'nope') } }), 'tts-server');
 });
 
-test('内置 aria2c 路径：只有 Windows 有，开发走 bin/aria2，打包走 resources/aria2', () => {
+test('内置 aria2c 路径：Windows/macOS 有，开发走 bin/aria2，打包看 extraResource 布局', () => {
   const root = tempDir();
   const devExe = path.join(root, 'bin', 'aria2', 'aria2c.exe');
   fs.mkdirSync(path.dirname(devExe), { recursive: true });
@@ -395,9 +395,38 @@ test('内置 aria2c 路径：只有 Windows 有，开发走 bin/aria2，打包�
     packedExe,
   );
 
-  // macOS / Linux / Windows arm64 都没有官方构建：不内置，交给 PATH 探测
-  assert.equal(dub.getBundledAria2Path({ app: devApp, platform: 'darwin' }), null);
+  // macOS：开发态是可执行文件 aria2c（无扩展名）
+  const darwinDevExe = path.join(root, 'bin', 'aria2', 'aria2c');
+  fs.writeFileSync(darwinDevExe, '');
+  assert.equal(dub.getBundledAria2Path({ app: devApp, platform: 'darwin' }), darwinDevExe);
+  // macOS 打包态：extraResource 复制整个 bin/，所以落在 resources/bin/aria2/
+  const darwinPacked = path.join(resources, 'bin', 'aria2', 'aria2c');
+  fs.mkdirSync(path.dirname(darwinPacked), { recursive: true });
+  fs.writeFileSync(darwinPacked, '');
+  assert.equal(
+    dub.getBundledAria2Path({ app: packedApp, platform: 'darwin', resourcesPath: resources }),
+    darwinPacked,
+  );
+  // 显式 resources/aria2/ 布局也认（将来若给 macOS 加独立 extraResource）
+  const darwinExplicit = path.join(resources, 'aria2', 'aria2c');
+  fs.mkdirSync(path.dirname(darwinExplicit), { recursive: true });
+  fs.writeFileSync(darwinExplicit, '');
+  assert.equal(
+    dub.getBundledAria2Path({ app: packedApp, platform: 'darwin', resourcesPath: resources }),
+    darwinExplicit,
+  );
+
+  // Linux 不内置：交给 PATH 探测
   assert.equal(dub.getBundledAria2Path({ app: devApp, platform: 'linux' }), null);
+  // Windows 不会命中 macOS 的 resources/bin/aria2/ 布局（可执行文件名不同）
+  const darwinOnlyRoot = path.join(root, 'only-darwin-layout');
+  fs.mkdirSync(path.join(darwinOnlyRoot, 'bin', 'aria2'), { recursive: true });
+  fs.writeFileSync(path.join(darwinOnlyRoot, 'bin', 'aria2', 'aria2c'), '');
+  assert.equal(dub.getBundledAria2Path({
+    app: packedApp,
+    platform: 'win32',
+    resourcesPath: darwinOnlyRoot,
+  }), null);
   // 文件不存在时不算命中
   assert.equal(dub.getBundledAria2Path({
     app: { isPackaged: false, getAppPath: () => path.join(root, 'nope') },
@@ -1472,5 +1501,30 @@ test('模型下载：内置缺失时回退 PATH 探测 aria2c', async () => {
   assert.equal(probes.length, 1, '没有内置二进制时应探测 PATH');
   const downloads = h.spawned.filter((record) => record.cmd === 'aria2c' && record.args.includes('-c'));
   assert.equal(downloads.length, 2, '探测通过后用 PATH 上的 aria2c 下载');
+  h.cleanup();
+});
+
+test('模型下载：macOS 打包态命中 resources/bin/aria2/aria2c（整目录复制布局）', async () => {
+  const resourcesPath = path.join(tempDir(), 'resources');
+  const h = loadService({
+    variant: null,
+    aria2Probe: true,
+    platform: 'darwin',
+    isPackaged: true,
+    appPath: path.join(resourcesPath, 'app.asar'),
+    resourcesPath,
+  });
+  const packedExe = path.join(resourcesPath, 'bin', 'aria2', 'aria2c');
+  fs.mkdirSync(path.dirname(packedExe), { recursive: true });
+  fs.writeFileSync(packedExe, '');
+
+  const result = await h.service.download(h.sender, 'Q8_0', 'official');
+  assert.equal(result.cancelled, false);
+  const aria2Calls = h.spawned.filter((record) => /aria2c/i.test(String(record.cmd)));
+  assert.equal(aria2Calls.length, 2, '两个文件各一次 aria2c');
+  for (const call of aria2Calls) {
+    assert.equal(call.cmd, packedExe, 'macOS 应使用 resources/bin/aria2/aria2c');
+    assert.equal(call.args.includes('--version'), false, '内置二进制不跑探针');
+  }
   h.cleanup();
 });

@@ -110,16 +110,31 @@ ggml.dll / ggml-base.dll / ggml-cpu.dll，Vulkan 版另有 ggml-vulkan.dll，合
 ## aria2c（模型下载断点续传）
 
 字幕配音的模型下载优先用 aria2c（`-c` 断点续传，取消/失败保留半成品），`main/dub.js` 的
-`resolveAria2` 按「注入 → `FFGUI_ARIA2` → 内置 `bin/aria2/aria2c.exe` → PATH 探测」找它。
+`resolveAria2` 按「注入 → `FFGUI_ARIA2` → 内置 `bin/aria2/` → PATH 探测」找它，
+全都没有时回退内置 https 下载（功能可用，但没有断点续传）。
 
-- 只有 **Windows x64** 内置：aria2 官方 Release 只发布 win-64bit 构建，没有 Windows arm64
-  与 macOS 版本，这两个平台跳过内置、运行时探 PATH，都没有时回退内置 https 下载
-  （功能可用，但没有断点续传）
-- 位置约定：开发 `bin/aria2/aria2c.exe`，打包后经 extraResource 落到 `resources/aria2/`
-- 来源：官方 Release 的 `aria2-1.37.0-win-64bit-build1.zip`
-  （https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip），
-  解开取其中的 `aria2c.exe` 放入本目录
-- `bin/aria2/` 同样不入库（见 .gitignore），CI 每次现下（Windows x64 job 的
-  「下载 aria2c 并放入 bin/aria2」步骤）
+- 位置约定（开发态都是本目录下的 `aria2/`，打包后由 forge 的 extraResource 分发）：
+  - Windows（x64 / arm64）：`bin/aria2/aria2c.exe` → 打包后 `resources/aria2/aria2c.exe`
+  - macOS（arm64）：`bin/aria2/aria2c` → 打包后 `resources/bin/aria2/aria2c`
+    （macOS 的 extraResource 是整个 `bin/` 目录，`bin/bin` 与 `bin/lib` 的相对布局不能变）
+  - Linux：不内置，运行时探 PATH
+- 来源与平台差异：
+  - **Windows x64**：官方 Release 的 `aria2-1.37.0-win-64bit-build1.zip`
+    （https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip），
+    解开取 `aria2c.exe`
+  - **Windows arm64（WOA）**：aria2 官方只发 win-64bit，`abcfy2/aria2-static-build` 目前也只
+    交叉编 linux-musl 与 x86_64/i686 mingw，没有 arm64 资产，所以**用的是同一份官方 x64
+    构建**，由 Windows 11 ARM 的系统模拟执行（下载是 I/O 密集型，模拟开销可忽略；winget /
+    choco 里的 aria2 在 WOA 上也是这个形态）。CI 会先探一次上游有没有 aarch64 资产，
+    有了就自动改用原生版本
+  - **macOS arm64**：官方与 abcfy2 都没有 darwin 构建，CI 在 runner 上**原生编译**：
+    官方 `aria2-1.37.0.tar.gz`（自带 `configure`）+ brew `openssl@3` 的静态库，
+    `./configure --with-openssl --with-ca-bundle=/etc/ssl/cert.pem` 关掉
+    bittorrent/metalink/ssh2/sqlite/gmp/c-ares（只用 HTTPS + HTTP Range 下载），
+    `ARIA2_STATIC=yes`，产物用 `otool -L` 校验不依赖 Homebrew 动态库
+- 编译/下载失败都不阻断打包：缺 `bin/aria2/` 时 forge 自动跳过，运行时回退 PATH 与 https
+- `bin/aria2/` 同样不入库（见 .gitignore），CI 每次现下/现编（Windows x64 job 的
+  「下载 aria2c 并放入 bin/aria2」、Windows arm64 job 的「内置 aria2c 并放入 bin/aria2」、
+  macOS job 的「编译 aria2c 并放入 bin/aria2」）
 - 调试时可用 `FFGUI_ARIA2` 指定任意 aria2c 完整路径（会先跑 `aria2c --version` 自检，
   不可用则继续尝试内置与 PATH）

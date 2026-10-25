@@ -242,25 +242,30 @@ function enginePresent(enginePath) {
 
 // ---------- 纯函数：aria2c 路径 ----------
 
-// 随包内置的 aria2c：只有 Windows x64 有（aria2 官方只发布 win-64bit 构建，没有
-// macOS / Windows arm64 版本），这些平台返回 null，运行时走 PATH 探测再回退 https。
-// - 开发：<app>/bin/aria2/aria2c.exe
-// - 打包：resources/aria2/aria2c.exe（forge 的 extraResource 把 bin/aria2/ 映射到这里）
+// 随包内置的 aria2c：Windows 与 macOS 随包，Linux 不内置（发行版的 aria2 足够，
+// 运行时走 PATH 探测再回退内置 https 下载）。
+// - 开发：<app>/bin/aria2/aria2c[.exe]
+// - 打包 Windows：resources/aria2/aria2c.exe（forge extraResource 把 bin/aria2/ 映射到这）
+// - 打包 macOS：resources/bin/aria2/aria2c（macOS 的 extraResource 复制整个 bin/，
+//   bin/bin 与 bin/lib 的相对布局不能变），同时兼容 resources/aria2/aria2c 布局
 // 随包分发即可信，命中后不再跑 --version 自检；文件不存在才返回 null。
 function getBundledAria2Path(options = {}) {
   const fsImpl = options.fs || fs;
   const platform = options.platform || process.platform;
-  if (platform !== 'win32') return null;
+  if (platform !== 'win32' && platform !== 'darwin') return null;
+  const exeName = platform === 'win32' ? 'aria2c.exe' : 'aria2c';
   const app = options.app;
   const resourcesPath = typeof options.resourcesPath === 'string' && options.resourcesPath
     ? options.resourcesPath
     : (process.resourcesPath || '');
   const candidates = [];
   if (app && app.isPackaged && resourcesPath) {
-    candidates.push(path.join(resourcesPath, 'aria2', 'aria2c.exe'));
+    candidates.push(path.join(resourcesPath, 'aria2', exeName));
+    // macOS 走整目录复制，aria2/ 会落在 resources/bin/ 下（Windows 不会命中）
+    candidates.push(path.join(resourcesPath, 'bin', 'aria2', exeName));
   }
   if (app && typeof app.getAppPath === 'function') {
-    candidates.push(path.join(app.getAppPath(), 'bin', 'aria2', 'aria2c.exe'));
+    candidates.push(path.join(app.getAppPath(), 'bin', 'aria2', exeName));
   }
   for (const candidate of candidates) {
     try {
@@ -1214,11 +1219,11 @@ function createDubService(options = {}) {
   // ---------- 模型下载 ----------
 
   // aria2c 探测：优先 aria2c（支持断点续传），没有时回退内置 https 实现。
-  // 优先级见 detectAria2：注入 > FFGUI_ARIA2 > 随包内置（仅 Windows x64）> PATH 探测。
+  // 优先级见 detectAria2：注入 > FFGUI_ARIA2 > 随包内置（Windows / macOS）> PATH 探测。
   // options.aria2 可注入：可执行文件路径字符串 / true（裸名 aria2c）/ false（强制
   // 不可用）/ Promise<前述任一> / { path }。未注入时先看环境变量 FFGUI_ARIA2
   // （仿 FFGUI_TTS_SERVER，便于自定义安装），再看 bin/aria2 的内置二进制（打包后
-  // 在 resources/aria2），最后探测 PATH 上的 aria2c。
+  // Windows 在 resources/aria2、macOS 在 resources/bin/aria2），最后探测 PATH。
   // 探测结果在服务生命周期内只算一次；测试默认注入 false，不会真去跑 spawn。
   function resolveAria2() {
     if (!aria2Pending) aria2Pending = detectAria2();
@@ -1240,14 +1245,14 @@ function createDubService(options = {}) {
       console.log(`[ffgui] FFGUI_ARIA2 指向的 aria2c 不可用（${override}），继续尝试内置与 PATH`);
     }
 
-    // 3) 随包内置（只有 Windows x64 携带）：存在即信任，不跑 --version 自检
+    // 3) 随包内置（Windows / macOS）：存在即信任，不跑 --version 自检
     const bundled = getBundledAria2Path({ fs: fsImpl, platform, app, resourcesPath });
     if (bundled) {
       console.log(`[ffgui] 使用内置 aria2c：${bundled}`);
       return { path: bundled };
     }
 
-    // 4) PATH 探测（macOS / Windows arm64 没有内置二进制，靠这条）
+    // 4) PATH 探测（Linux，以及没有随包二进制的 Windows arm64 等场景）
     if (await probeAria2('aria2c')) return { path: 'aria2c' };
     console.log('[ffgui] 未找到可用的 aria2c（内置与 PATH 均无），模型下载回退内置 https 实现');
     return null;

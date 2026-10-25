@@ -83,13 +83,16 @@ function extraResources() {
   } else {
     console.warn('[ffgui] 未找到 bin/tts/，打包产物不含 TTS 引擎（字幕配音将回退 PATH 查找）');
   }
-  // bin/aria2/ 里的 aria2c.exe 供模型下载断点续传用（main/dub.js 的 getBundledAria2Path）。
-  // 只有 Windows x64 有官方构建，其他平台即使目录里有文件也不打包（macOS 的 ./bin/ 已整目录
-  // 复制，这里不再重复追加）；缺失时运行时回退 PATH 探测
-  if (process.platform === 'win32' && fs.existsSync(path.join(__dirname, 'bin', 'aria2'))) {
-    list.push('./bin/aria2/');
-  } else if (process.platform === 'win32') {
-    console.warn('[ffgui] 未找到 bin/aria2/，打包产物不含 aria2c（模型下载回退 PATH 探测）');
+  // bin/aria2/ 里的 aria2c（Windows 是 aria2c.exe，macOS 是 aria2c）供模型下载断点续传用，
+  // 位置由 main/dub.js 的 getBundledAria2Path 解析。Windows 需要显式追加（落到
+  // resources/aria2/）；macOS 的 extraResource 本来就是整个 bin/ 目录（bin/bin、bin/lib
+  // 的相对布局不能变），aria2/ 会随目录复制到 resources/bin/aria2/，这里不再重复追加
+  if (process.platform === 'win32') {
+    if (fs.existsSync(path.join(__dirname, 'bin', 'aria2'))) {
+      list.push('./bin/aria2/');
+    } else {
+      console.warn('[ffgui] 未找到 bin/aria2/，打包产物不含 aria2c（模型下载回退 PATH 探测）');
+    }
   }
   return list;
 }
@@ -118,8 +121,9 @@ module.exports = {
     // Windows 只带 ffmpeg.exe：应用探测与处理全部走 ffmpeg，ffprobe 未被使用
     // （gyan full build 的 ffprobe 与 ffmpeg 一样 140MB+，不携带可省一半 bin 体积）
     // bin/disc/ 是 Rust 光盘侧车，bin/tts/ 是 TTS 引擎 tts-server（native/qwentts.cpp
-    // 子模块编译产物），bin/aria2/ 是模型下载用的 aria2c.exe（仅 Windows x64 有官方
-    // 构建），都从 asar 外的 resources/ 分发；Linux 三者都不携带（回退系统 PATH）
+    // 子模块编译产物），bin/aria2/ 是模型下载用的 aria2c（Windows 用官方 x64 构建——
+    // WOA 靠系统模拟，macOS 由 CI 现编，Linux 不携带），都从 asar 外的 resources/ 分发；
+    // Linux 三者都不携带（回退系统 PATH）
     extraResource: extraResources(),
     ignore: [
       /^\/out($|\/)/,

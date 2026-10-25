@@ -276,9 +276,9 @@ jobs:
           # 同 x64：构建失败不阻断打包，显式归零 $LASTEXITCODE（真正的错误已记录为警告）
           exit 0
 
-      # 不内置 aria2c：aria2 官方 Release 只有 Windows 64 位（x64）构建，没有 arm64 版。
-      # 运行时 main/dub.js 的 detectAria2 依次尝试 FFGUI_ARIA2 → 内置（无）→ PATH 探测
-      # （用户自行安装的 aria2c）→ 回退内置 https 下载，功能可用但无断点续传。
+      # aria2 官方没有 Windows arm64 构建，上游也没有可白嫖的 arm64 资产（见下面步骤）：
+      # 走「官方 x64 构建 + Windows 11 ARM 系统模拟」，失败只警告不阻断（运行时回退
+      # PATH 探测与内置 https）。ffmpeg 则有真正的 arm64 社区构建。
       - name: 下载 ARM64 版 ffmpeg 并放入 bin/
         shell: pwsh
         run: |
@@ -309,6 +309,64 @@ jobs:
           $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
           if ($machine -ne 0xAA64) { throw ('bin/ffmpeg.exe 不是 ARM64 二进制 (machine=0x{0:X4})' -f $machine) }
           Write-Host 'ffmpeg.exe 机器类型校验通过：ARM64'
+
+      # 内置 aria2c（WOA）。aria2 官方只发 win-64bit 构建，abcfy2/aria2-static-build 也
+      # 只在 ubuntu 上交叉编 linux-musl 与 x86_64/i686 mingw —— 先探一次上游有没有 arm64
+      # 资产（哪天加上了就能直接白嫖），没有就退回官方 x64 构建：Windows 11 ARM 会用
+      # 系统模拟执行它，下载是 I/O 密集型，模拟开销可忽略；这与 winget/choco 里的 aria2
+      # 在 WOA 上的实际形态一致（社区也没有原生 arm64 版）。
+      # 失败只警告：缺 bin/aria2 时 forge 自动跳过，运行时回退 PATH 探测与内置 https。
+      - name: 内置 aria2c 并放入 bin/aria2
+        shell: pwsh
+        run: |
+          try {
+            $url = ''
+            try {
+              $headers = @{ Authorization = 'Bearer ${{ secrets.GITHUB_TOKEN }}' }
+              $rel = Invoke-RestMethod 'https://api.github.com/repos/abcfy2/aria2-static-build/releases/tags/1.37.0' -Headers $headers
+              $asset = $rel.assets |
+                Where-Object { $_.name -match 'aarch64.*(w64-mingw32|windows|woa)' } |
+                Select-Object -First 1
+              if ($asset) {
+                $url = $asset.browser_download_url
+                Write-Host "上游有 arm64 资产：$($asset.name)"
+              }
+            } catch {
+              Write-Warning "查询 abcfy2/aria2-static-build 资产失败：$($_.Exception.Message)"
+            }
+            if (-not $url) {
+              Write-Host '上游没有 Windows arm64 资产，改用官方 x64 构建（Win11 ARM 系统模拟）'
+              $url = 'https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip'
+            }
+            # 解压到 $RUNNER_TEMP，不在仓库根目录留残留
+            $tmp = Join-Path $env:RUNNER_TEMP 'aria2-arm64-extract'
+            Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force $tmp | Out-Null
+            curl.exe -L --fail -o "$tmp\aria2.zip" $url
+            if ($LASTEXITCODE -ne 0) { throw '下载 aria2 压缩包失败' }
+            7z x "$tmp\aria2.zip" -o"$tmp" | Out-Null
+            $exe = Get-ChildItem -Recurse -Filter aria2c.exe -Path $tmp | Select-Object -First 1
+            if (-not $exe) { throw '压缩包中未找到 aria2c.exe' }
+            New-Item -ItemType Directory -Force bin/aria2 | Out-Null
+            Copy-Item $exe.FullName bin/aria2/aria2c.exe
+            # runner 是 x64：arm64 资产只能校验 PE 头；官方 x64 资产可在这里直接跑
+            $bytes = [System.IO.File]::ReadAllBytes("$PWD\bin\aria2\aria2c.exe")
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -eq 0xAA64) {
+              Write-Host 'aria2c.exe 机器类型校验通过：ARM64'
+            } elseif ($machine -eq 0x8664) {
+              Write-Host 'aria2c.exe 为 x64 构建：Windows 11 ARM 通过系统模拟执行（aria2 无官方 arm64 构建）'
+              .\bin\aria2\aria2c.exe --version | Select-Object -First 1
+            } else {
+              throw ('aria2c.exe 机器类型异常 (machine=0x{0:X4})' -f $machine)
+            }
+          } catch {
+            Write-Warning "内置 aria2c 失败：$($_.Exception.Message)"
+            Write-Warning '本次打包不含 aria2c（模型下载回退 PATH 探测与内置 https）'
+            Remove-Item -Recurse -Force bin/aria2 -ErrorAction SilentlyContinue
+          }
+          exit 0
 
       - name: 安装依赖
         run: npm ci
@@ -395,6 +453,73 @@ jobs:
           rm -rf ffmac ffmac.tar.gz
           chmod +x bin/bin/ffmpeg
           ./bin/bin/ffmpeg -version | head -1
+
+      # aria2c 官方没有 macOS 构建（abcfy2/aria2-static-build 也只出 linux-musl 与
+      # mingw），因此在 runner 上原生编译：release tarball 自带 configure，唯一外部
+      # 依赖是 brew 的静态 OpenSSL，其余特性（bittorrent/metalink/ssh2/sqlite/gmp/c-ares）
+      # 全关——我们只用它的 HTTPS + HTTP Range 下载。
+      # 任何一步失败都只打警告：打包继续，运行时 detectAria2 回退 PATH 探测与内置 https。
+      - name: 编译 aria2c 并放入 bin/aria2
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: |
+          set -u
+          BUILD="$RUNNER_TEMP/aria2-build"
+          rm -rf "$BUILD" bin/aria2
+          mkdir -p "$BUILD"
+          if (
+            set -e
+            brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+            brew list pkg-config >/dev/null 2>&1 || brew install pkg-config
+            OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+            # 只放 .a 的暂存目录：LDFLAGS 里排在 brew 的 -L 之前，-lssl/-lcrypto 才会
+            # 命中静态库（brew 同时提供 .dylib，链接器默认优先动态库）
+            mkdir -p "$BUILD/static"
+            cp "$OPENSSL_PREFIX/lib/libssl.a" "$OPENSSL_PREFIX/lib/libcrypto.a" "$BUILD/static/"
+            curl -L --fail --retry 3 -o "$BUILD/aria2.tar.gz" \
+              https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0.tar.gz
+            tar xzf "$BUILD/aria2.tar.gz" -C "$BUILD"
+            cd "$BUILD/aria2-1.37.0"
+            # TLS 用静态 OpenSSL，CA 包用 macOS 自带的 /etc/ssl/cert.pem（OpenSSL 不读
+            # 系统钥匙串，必须把默认 CA 路径编进去，否则 --check-certificate 必失败）
+            ./configure \
+              --prefix="$BUILD/install" \
+              --with-openssl --without-gnutls --without-appletls --without-wintls \
+              --without-libgcrypt --without-libnettle \
+              --without-libssh2 --without-libxml2 --without-libexpat \
+              --without-sqlite3 --without-libgmp --without-libcares --without-libuv \
+              --with-libz \
+              --disable-bittorrent --disable-metalink --disable-websocket --disable-nls \
+              --enable-static --disable-shared \
+              --with-ca-bundle=/etc/ssl/cert.pem \
+              ARIA2_STATIC=yes \
+              PKG_CONFIG_PATH="$OPENSSL_PREFIX/lib/pkgconfig" \
+              CPPFLAGS="-I$OPENSSL_PREFIX/include" \
+              LDFLAGS="-L$BUILD/static -L$OPENSSL_PREFIX/lib"
+            make -j"$(sysctl -n hw.ncpu)"
+            ARIA2C=src/aria2c
+            if [ -x src/.libs/aria2c ]; then ARIA2C=src/.libs/aria2c; fi
+            # 不能依赖 Homebrew 动态库：用户机器上没有 brew
+            if ! file "$ARIA2C" | grep -q 'Mach-O'; then
+              echo "构建产物不是 Mach-O 可执行文件：$(file "$ARIA2C")"
+              exit 1
+            fi
+            if otool -L "$ARIA2C" | grep -qE '/(opt|usr/local)/'; then
+              echo 'aria2c 仍依赖 Homebrew 动态库，放弃内置：'
+              otool -L "$ARIA2C"
+              exit 1
+            fi
+            "$ARIA2C" --version | head -1
+            mkdir -p "$GITHUB_WORKSPACE/bin/aria2"
+            cp "$ARIA2C" "$GITHUB_WORKSPACE/bin/aria2/aria2c"
+            chmod +x "$GITHUB_WORKSPACE/bin/aria2/aria2c"
+          ); then
+            ls -l bin/aria2/
+          else
+            echo '警告：aria2c 编译失败，本次打包不含内置 aria2c（模型下载回退 PATH 探测与内置 https）'
+            rm -rf bin/aria2
+          fi
 
       # macOS 只做 CPU 后端（Metal 由 ggml 在 APPLE 下默认开启，Vulkan/MoltenVK 暂不涉及）。
       # cmake 在 runner 上已预装；构建失败不阻断打包，但要建出 bin/tts/

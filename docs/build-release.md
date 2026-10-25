@@ -12,9 +12,10 @@
 - `node scripts/build-tts.cjs [--backend vulkan|cpu] [--arch x64|arm64] [--no-native] [--clean]` — 编译
   TTS 引擎到 `bin/tts/`（可选：不编则打包时跳过 bin/tts/，字幕配音回退 PATH；需先
   `git submodule update --init --recursive` 与 cmake，Vulkan 后端另需 Vulkan SDK）
-- `bin/aria2/aria2c.exe`（模型下载断点续传，仅 Windows x64）没有构建脚本，本地开发需要时
-  按 `bin/README.md` 从 aria2 官方 Release 下载放入；缺失不影响打包（forge 只在该目录存在时
-  才把它作为 extraResource，运行时回退 PATH 探测与内置 https 下载）
+- `bin/aria2/aria2c[.exe]`（模型下载断点续传）没有本地构建脚本：Windows 直接放 aria2 官方
+  x64 构建（WOA 也用它，Win11 模拟执行），macOS 需要自己编静态版本（配方见
+  `docs/build-release.md` 的 CI 段落与 `bin/README.md`）；缺失不影响打包（forge 只在该目录
+  存在时处理它，运行时回退 PATH 探测与内置 https 下载）
 
 `npm test` 用 Node 内置测试运行器（`scripts/regression.test.cjs`），需 PATH 中有 ffmpeg/ffprobe
 或设置 `FFMPEG` / `FFPROBE`。没有 lint/format 配置。
@@ -26,7 +27,7 @@
 - Windows x64：从 GyanD/codexffmpeg 最新 release 下载 full_build.7z（gyan.dev 直链在 CI 上会被
   反爬拦截），取 `ffmpeg.exe` 放入 `bin/`；从 aria2 官方 Release 下载
   `release-1.37.0/aria2-1.37.0-win-64bit-build1.zip`（解压到 `$RUNNER_TEMP`），取 `aria2c.exe`
-  放入 `bin/aria2/`（模型下载断点续传用；aria2 官方只有 x64 构建，arm64/macOS 不内置）；
+  放入 `bin/aria2/`（模型下载断点续传用）；
   dtolnay/rust-toolchain 构建 Rust 侧车并复制为
   `bin/disc/ffgui-disc.exe`；humbletim/install-vulkan-sdk 装 Vulkan SDK 后
   `node scripts/build-tts.cjs --backend vulkan --no-native` 构建 TTS 引擎到 `bin/tts/`
@@ -40,9 +41,18 @@
   并校验 PE 头机器类型（0xAA64）；x64 runner 无法执行 arm64 二进制；TTS 引擎只做
   `--backend cpu --arch arm64`（Vulkan 交叉构建的工具链不稳，VS 生成器另加 `-A ARM64`）并同样
   校验 0xAA64；`npm run package -- --arch=arm64` 交叉打包，产物 `FFGui-windows-arm64.7z` +
-  `FFGui-<版本>-arm64-Setup.exe`（NSIS 安装器架构无关，由 x64 makensis 交叉编译 arm64 内容）
+  `FFGui-<版本>-arm64-Setup.exe`（NSIS 安装器架构无关，由 x64 makensis 交叉编译 arm64 内容）。
+  aria2c 用**官方 x64 构建**（Win11 ARM 系统模拟）：aria2 官方、`abcfy2/aria2-static-build`
+  都没有 arm64 Windows 资产，工作流先探一次上游（有了会自动改用原生 asset），PE 头
+  0x8664/0xAA64 分别校验；下载失败只警告，缺 `bin/aria2/` 时 forge 自动跳过
 - macOS：下载 kisaragychihaya/ffmpeg_build_mac 最新 release 的 macos-arm64-static tar.gz，
   `bin/` 与 `lib/` 原样放入项目 `bin/` 并 `chmod +x`；cargo 构建侧车到 `bin/disc/ffgui-disc`；
+  **原生编译 aria2c**：官方没有 macOS 构建，用官方 `aria2-1.37.0.tar.gz`（自带 configure）
+  + brew `openssl@3` 的静态库（`libssl.a`/`libcrypto.a` 放到只含 `.a` 的暂存目录，让链接器
+  命中静态库），`./configure --with-openssl --with-ca-bundle=/etc/ssl/cert.pem
+  --without-{gnutls,appletls,libgcrypt,libnettle,libssh2,libxml2,libexpat,sqlite3,libgmp,libcares,libuv}
+  --disable-{bittorrent,metalink,websocket} ARIA2_STATIC=yes` → `bin/aria2/aria2c`；
+  产物用 `otool -L` 校验不引用 `/opt/homebrew`（用户机器没有 brew），编译失败只警告；
   `node scripts/build-tts.cjs --backend cpu --no-native` 构建 tts-server 到 `bin/tts/`（Metal
   由 ggml 在 APPLE 下默认开启，MoltenVK 暂不涉及）；打包后用 ditto 压缩为
   `FFGui-macos-arm64.zip`；Release 触发时同样上传。

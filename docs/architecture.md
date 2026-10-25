@@ -49,9 +49,13 @@ main/dub.js         字幕配音（dub）：spawn 本地 TTS 引擎 tts-server�
                     ffmpeg 按字幕原始时间轴拼装音频、与源视频混流输出。模型 GGUF 不随包
                     分发：首次使用下载到 userData/tts-models/（官方地址与 hf-mirror 镜像可
                     切）。下载器 resolveAria2 按四级优先：options.aria2 注入 → 环境变量
-                    FFGUI_ARIA2（会跑 --version 自检）→ 内置 bin/aria2/aria2c.exe（打包后
-                    resources/aria2/，仅 Windows x64，命中即信任不探测）→ PATH 上的 aria2c；
-                    全都没有才回退内置 https 实现（该路径失败即删半成品）。aria2 路径用
+                    FFGUI_ARIA2（会跑 --version 自检）→ 内置 aria2c（开发 bin/aria2/，
+                    打包后 Windows 在 resources/aria2/aria2c.exe、macOS 在
+                    resources/bin/aria2/aria2c，命中即信任不探测）→ PATH 上的 aria2c；
+                    全都没有才回退内置 https 实现（该路径失败即删半成品）。内置二进制由
+                    CI 提供：Windows 取 aria2 官方 x64 构建（WOA 靠 Win11 模拟执行），
+                    macOS 在 runner 上原生编静态 OpenSSL 版本，编译/下载失败只警告；
+                    aria2 路径用
                     -c 断点续传，取消/失败保留 .ffgui-partial 与 .aria2 控制文件；
                     一次下载内不切换实现；引擎缺失或
                     启动失败要给可读提示，不能静默产出无人声的结果；取消需 kill 引擎子进程并

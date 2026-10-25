@@ -74,14 +74,22 @@ main/dub.js         字幕配音（dub）：spawn 本地 TTS 引擎 tts-server�
                     一次下载内不切换实现；引擎缺失或
                     启动失败要给可读提示，不能静默产出无人声的结果；取消需 kill 引擎子进程并
                     清理临时音频与半成品。
-                    混流（buildDubMuxArgs）用 -map 0 保留源全部流、把配音拼成额外一条音轨，
-                    同时用 -disposition 把 default 让给配音轨（源音轨的 default 一律摘掉）：
-                    播放器按 default disposition 选轨，源音轨占着默认时用户听到的还是原声，
-                    会以为配音没混进去（实测反馈）。三步自检不可省，宁可报错也不交废成品：
+                    混流（buildDubMuxArgs）有两种输出结构。默认（job.mix = false）用 -map 0
+                    保留源全部流、把配音拼成额外一条音轨，同时用 -disposition 把 default
+                    让给配音轨（源音轨的 default 一律摘掉）：播放器按 default disposition
+                    选轨，源音轨占着默认时用户听到的还是原声，会以为配音没混进去（实测反馈）。
+                    混音模式（mix = true 且源有音轨）改走 buildDubMixArgs：
+                    -filter_complex "[1:a]volume=<dB>dB[dub];[0:a:0][dub]amix=inputs=2:
+                    duration=longest:normalize=0[mixout]"，只调配音侧（mixVolumeDb 归一为
+                    -30~+12 dB，越界钳制、非数值回 0），-map 0:v + -map [mixout]（+ 字幕）
+                    -c:v copy -c:a aac -ar 48000 -ac 2，源音轨不再单独存在、播放器里关不掉；
+                    normalize=0 是因为音量已由 dB 精确控制，amix 默认的按路数归一化会二次压低。
+                    源本来没有音轨时 mix 无从谈起，仍走多轨分支（那本来就只有配音一条）。
+                    三步自检不可省，宁可报错也不交废成品：
                     单条 WAV 用 inspectWavBuffer 逐块走 RIFF 校验 data 段非空（HTTP 200 + 空
                     data 段会让该条字幕静音落盘）→ 组装后用 volumedetect 判整条配音轨是否全
                     静音（SILENT_MAX_DB = -60；16bit 绝对静音实测报 -91.0 dB 而非 -inf）→
-                    混流后回探成品音轨数必须等于源音轨数 + 1，不合格的成品删掉并报
+                    混流后回探成品音轨数（多轨 = 源音轨数 + 1，混音 = 1），不合格的成品删掉并报
                     FFGUI_DUB_MUX
 main/theme.js       主题持久化（system/light/dark）到 userData/config.json 的 theme 字段，经
                     nativeTheme.themeSource 强制全局生效；IPC ffgui:theme-get / ffgui:theme-set
@@ -168,8 +176,11 @@ html/js/disc.type.js 光盘页类型切换控制器（disc.type* 文案）：两
                      window.__ffguiCdPage 两个最小钩子（isRunning / refreshDrives）；光驱枚举
                      改为选类型时惰性触发（两侧 IIFE 不再加载即枚举）
 html/js/dub.js      字幕配音页：载入字幕 → 选发音语言 / 说话人 → 逐条合成/试听 → 生成配音音轨
-                    并与视频混流；说话人列表取 status().speakers（缺省用本文件兜底常量），文案走
-                    locales 的 dub 命名空间，能力全部经 window.ffgui（不碰 Node 与文件系统）
+                    并与视频混流；「混音输出」复选框决定混流结构（不勾选追加一条配音轨，
+                    勾选则与源音轨 amix 成唯一一条音轨，配音音量 -30~+12 dB 的数字输入仅在
+                    勾选后可用，输入值在失焦时按边界钳制写回）；说话人列表取
+                    status().speakers（缺省用本文件兜底常量），文案走 locales 的 dub 命名空间，
+                    能力全部经 window.ffgui（不碰 Node 与文件系统）
 html/css/style.css  全部页面共用样式
 bin/                内置 ffmpeg。Windows 只带 ffmpeg.exe 单文件（约 140–210MB，ffprobe 未被
                     使用故不带），打包后到 resources/ 根目录（getFfmpegPath 优先

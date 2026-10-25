@@ -312,6 +312,88 @@ test('混流：配音轨设为默认音轨，源音轨全部摘掉 default（否
   }
 });
 
+// ---------- 混音分支（mix=true） ----------
+
+test('混音：源有音轨时用 volume + amix 合成唯一音轨，不再保留源音轨', () => {
+  const args = dub.buildDubMuxArgs({
+    video: '/v/a.mp4',
+    audioWav: '/tmp/dub.wav',
+    outPath: '/v/a_dub.mp4',
+    sourceAudioCount: 1,
+    language: 'chinese',
+    title: '配音',
+    mix: true,
+    mixVolumeDb: -6,
+  });
+  const filter = args[args.indexOf('-filter_complex') + 1];
+  // 只调配音侧（[1:a] 是 dub.wav），源音轨原样进 amix
+  assert.ok(filter.includes('volume=-6dB'), filter);
+  assert.ok(filter.includes('[1:a]volume=-6dB[dub]'), filter);
+  assert.ok(filter.includes('[0:a:0][dub]amix=inputs=2:duration=longest:normalize=0[mixout]'), filter);
+  // normalize=0：不做二次归一（否则 amix 会把两路一起压低）
+  assert.ok(!filter.includes('normalize=1'), filter);
+
+  // 映射：画面 + 混音结果（+ 字幕），源音轨不再单独 map
+  assert.equal(args[args.indexOf('-map') + 1], '0:v');
+  assert.equal(args[args.indexOf('-map', args.indexOf('-map') + 1) + 1], '[mixout]');
+  assert.equal(args[args.indexOf('-map', args.indexOf('[mixout]')) + 1], '0:s?');
+  assert.ok(!args.includes('1:a:0'), '混音分支不该再 map 配音轨为独立音轨');
+  assert.ok(!args.some((arg) => arg === '-map' && args[args.indexOf(arg) + 1] === '0'),
+    '混音分支不该用 -map 0 保留源全部流');
+  // 视频复制、音频只有一次重编码（-c:a 不带流序号），落成 48kHz 立体声
+  assert.equal(args[args.indexOf('-c:v') + 1], 'copy');
+  assert.equal(args[args.indexOf('-c:a') + 1], 'aac');
+  assert.equal(args.filter((arg) => arg === '-c:a').length, 1);
+  assert.ok(!args.some((arg) => /^-c:a:\d+$/.test(arg)), '混音只有一条音轨，不按流序号写 -c:a:N');
+  assert.ok(!args.includes('-c'), '不能再用 -c copy 把音频原样拷走');
+  assert.equal(args[args.indexOf('-ar') + 1], '48000');
+  assert.equal(args[args.indexOf('-ac') + 1], '2');
+  // 唯一音轨的元数据与默认 disposition
+  assert.equal(args[args.indexOf('-metadata:s:a:0') + 1], 'language=zho');
+  assert.equal(args[args.indexOf('-metadata:s:a:0', args.indexOf('-metadata:s:a:0') + 1) + 1], 'title=配音');
+  assert.equal(args[args.indexOf('-disposition:a:0') + 1], 'default');
+  assert.equal(args.filter((arg) => /^-disposition:a:\d+$/.test(arg)).length, 1);
+  assert.equal(args.filter((arg) => arg === '-i').length, 2);
+  assert.equal(args[args.length - 1], '/v/a_dub.mp4');
+});
+
+test('混音：音量恒写出来（0 dB 也写），MKV 用 BCP 47 码且字幕原样复制', () => {
+  const args = dub.buildDubMuxArgs({
+    video: '/v/a.mkv', audioWav: '/tmp/dub.wav', outPath: '/v/a_dub.mkv', sourceAudioCount: 2,
+    language: 'chinese', mix: true,
+  });
+  const filter = args[args.indexOf('-filter_complex') + 1];
+  // 默认 mixVolumeDb = 0：仍是恒等变换，但要显式写出来（命令可复现）
+  assert.ok(filter.includes('volume=0dB'), filter);
+  // 源 2 条音轨也只取第一条进 amix（-map 0:v 只保留画面）
+  assert.ok(filter.includes('[0:a:0]'), filter);
+  assert.equal(args[args.indexOf('-metadata:s:a:0') + 1], 'language=zh');
+  assert.equal(args[args.indexOf('-c:s') + 1], 'copy');
+  // 不保留字幕：不带字幕 map，并显式 -sn
+  const noSub = dub.buildDubMuxArgs({
+    video: '/v/a.mp4', audioWav: '/tmp/dub.wav', outPath: '/v/a_dub.mp4', sourceAudioCount: 1,
+    mix: true, keepSubtitle: false,
+  });
+  assert.ok(!noSub.includes('0:s?'));
+  assert.ok(noSub.includes('-sn'));
+  assert.ok(!noSub.includes('-c:s'));
+});
+
+test('混音：源无音轨时退化为单条配音轨（不走 amix）', () => {
+  const args = dub.buildDubMuxArgs({
+    video: '/v/a.mp4', audioWav: '/tmp/dub.wav', outPath: '/v/a_dub.mp4',
+    sourceAudioCount: 0, mix: true, mixVolumeDb: -6, language: 'chinese',
+  });
+  // 没有原声可混：仍走多轨分支（此时它本就只有配音一条），不生成 filter_complex
+  assert.ok(!args.includes('-filter_complex'));
+  assert.equal(args[args.indexOf('-map') + 1], '0');
+  assert.equal(args[args.indexOf('-map', args.indexOf('-map') + 1) + 1], '1:a:0');
+  assert.equal(args[args.indexOf('-c:a:0') + 1], 'aac');
+  assert.equal(args[args.indexOf('-disposition:a:0') + 1], 'default');
+  // 退化分支不加音量滤镜（没有原声可平衡，见 buildDubMixArgs 注释）
+  assert.ok(!args.some((arg) => String(arg).includes('volume=')));
+});
+
 // ---------- 引擎返回的 WAV 与音量校验 ----------
 
 test('WAV 校验：合法音频通过，空 data 段/非 RIFF/截断响应都判失败', () => {
@@ -606,6 +688,8 @@ test('任务校验：白名单字段与错误码', () => {
     container: 'same',
     variant: '',
     speaker: 'Vivian',
+    mix: false,
+    mixVolumeDb: 0,
   });
   const full = dub.validateDubJob({
     id: 'job_2', video: '/v/a.mp4', subtitle: '/v/a.srt', language: 'Chinese', backend: 'cpu', container: 'mkv', variant: 'q4_k_m', speaker: 'Jackson',
@@ -621,6 +705,34 @@ test('任务校验：白名单字段与错误码', () => {
   bad({ id: 'x', video: '/v/a.mp4', subtitle: '/v/a.srt', container: 'avi' }, 'FFGUI_DUB_INVALID_JOB');
   bad({ id: 'x', video: '/v/a.mp4', subtitle: '/v/a.srt', variant: 'F16' }, 'FFGUI_DUB_INVALID_JOB');
   bad(null, 'FFGUI_DUB_INVALID_JOB');
+});
+
+test('任务校验：mix 只认布尔 true，mixVolumeDb 越界钳制、类型错回 0', () => {
+  const job = (extra) => dub.validateDubJob({
+    id: 'x', video: '/v/a.mp4', subtitle: '/v/a.srt', ...extra,
+  });
+  assert.equal(dub.MIX_VOLUME_MIN_DB, -30);
+  assert.equal(dub.MIX_VOLUME_MAX_DB, 12);
+  // 默认：不混音（保持多轨）、音量 0 dB
+  assert.equal(job({}).mix, false);
+  assert.equal(job({}).mixVolumeDb, 0);
+  // 混音开关只认布尔 true，字符串 "false"/数字 0 之类都按 false（宽松归一，不报错）
+  assert.equal(job({ mix: true }).mix, true);
+  for (const value of ['true', 'false', 1, 0, null, undefined, {}, []]) {
+    assert.equal(job({ mix: value }).mix, false, `mix=${JSON.stringify(value)} 应为 false`);
+  }
+  // 音量：区间内原样保留，越界钳到边界（钳制而非报错，见 normalizeMixVolumeDb）
+  assert.equal(job({ mix: true, mixVolumeDb: -6 }).mixVolumeDb, -6);
+  assert.equal(job({ mix: true, mixVolumeDb: 0 }).mixVolumeDb, 0);
+  assert.equal(job({ mix: true, mixVolumeDb: -45 }).mixVolumeDb, -30);
+  assert.equal(job({ mix: true, mixVolumeDb: 99 }).mixVolumeDb, 12);
+  // 非数值没有可推断的意图，回默认 0（字符串 "-6" 不算数值）
+  for (const value of ['-6', NaN, Infinity, -Infinity, null, undefined, {}, true, ['3']]) {
+    assert.equal(job({ mix: true, mixVolumeDb: value }).mixVolumeDb, 0,
+      `mixVolumeDb=${JSON.stringify(value)} 应回 0`);
+  }
+  assert.equal(dub.normalizeMixVolumeDb(-3.5), -3.5);
+  assert.equal(dub.normalizeMixVolumeDb(-100), -30);
 });
 
 test('说话人：十个固定名字、默认 Vivian，非法值回默认而不报错', () => {
@@ -1362,6 +1474,67 @@ test('配音任务：没有音轨的源视频混流后音轨数为 1 也算通�
   const mux = h.spawned.find(isMuxCall).args;
   // 源无音轨时配音是第 0 条，直接设为默认，不该出现摘自己 default 的 0
   assert.equal(mux[mux.indexOf('-disposition:a:0') + 1], 'default');
+  h.cleanup();
+});
+
+test('配音任务：混音模式只输出一条音轨，混流命令含 volume/amix，回探期望 1 条', async () => {
+  // 混音模式的成品回探结果：画面 + 唯一一条音轨
+  const h = loadService({
+    outputProbeStderr: [
+      "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'a_dub.mp4':",
+      '  Duration: 00:01:10.50, start: 0.000000, bitrate: 1000 kb/s',
+      '    Stream #0:0[0x1](und): Video: h264 (High), yuv420p, 1280x720',
+      '    Stream #0:1[0x2](zho): Audio: aac (LC), 48000 Hz, stereo, fltp (default)',
+    ].join('\n'),
+  });
+  const dir = tempDir();
+  const video = path.join(dir, 'movie.mp4');
+  fs.writeFileSync(video, 'video');
+  const subtitle = writeSubtitleFile(dir, [{ startMs: 0, endMs: 1000, text: 'A' }]);
+
+  const result = await h.service.start(h.sender, {
+    id: 'job-mix', video, subtitle, language: 'chinese', container: 'mp4', mix: true, mixVolumeDb: -6,
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.output, path.join(dir, 'movie_dub.mp4'));
+
+  // 混音命令含 -filter_complex，isMuxCall（2 个 -i 且无滤镜）不适用，按输出路径定位
+  const muxArgs = h.spawned
+    .filter((record) => record.cmd === 'ffmpeg-mock')
+    .map((record) => record.args)
+    .find((args) => args[args.length - 1] === result.output);
+  assert.ok(muxArgs, '必须执行混流');
+  const filter = muxArgs[muxArgs.indexOf('-filter_complex') + 1];
+  assert.ok(filter.includes('[1:a]volume=-6dB[dub]'), filter);
+  assert.ok(filter.includes('[0:a:0][dub]amix=inputs=2:duration=longest:normalize=0[mixout]'), filter);
+  assert.equal(muxArgs[muxArgs.indexOf('-ac') + 1], '2');
+  assert.equal(muxArgs.filter((arg) => arg === '-c:a').length, 1);
+  assert.ok(!muxArgs.includes('1:a:0'), '混音分支不该再单独 map 配音轨');
+  assert.equal(muxArgs[muxArgs.indexOf('-disposition:a:0') + 1], 'default');
+  // 混音成品同样过了自检（期望 1 条音轨）
+  assert.equal(h.events.some((event) => event.type === 'file-done'), true);
+  assert.equal(h.events.filter((event) => event.type === 'phase' && event.phase === 'mux').length, 1);
+  h.cleanup();
+});
+
+test('配音任务：混音后成品里源音轨仍单独存在时回探报 FFGUI_DUB_MUX', async () => {
+  // 混流"成功"但成品留了两条音轨（混音根本没生效）——不能当成功交付
+  const h = loadService({ outputProbeStderr: OUTPUT_PROBE_STDERR });
+  const dir = tempDir();
+  const video = path.join(dir, 'movie.mp4');
+  fs.writeFileSync(video, 'video');
+  const subtitle = writeSubtitleFile(dir, [{ startMs: 0, endMs: 1000, text: 'A' }]);
+
+  const result = await h.service.start(h.sender, { id: 'job-mix-bad', video, subtitle, mix: true });
+  assert.equal(result.output, null);
+  assert.equal(result.error.code, 'FFGUI_DUB_MUX');
+  assert.ok(result.error.message.includes(
+    ZH_DUB.errOutputNoDubTrack.replace('{{expected}}', '1').replace('{{actual}}', '2'),
+  ));
+  assert.deepEqual({ ...result.error.params },
+    { expected: 1, actual: 2, path: path.join(dir, 'movie_dub.mp4') });
+  assert.equal(fs.existsSync(path.join(dir, 'movie_dub.mp4')), false, '不合格的成品必须删掉');
+  assert.equal(h.events.some((event) => event.type === 'file-done'), false);
   h.cleanup();
 });
 

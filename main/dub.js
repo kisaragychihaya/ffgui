@@ -4,11 +4,14 @@
 //
 // 流程：读取字幕文件 -> 本地 TTS 引擎（native/qwentts.cpp 的 tts-server，
 // OpenAI 兼容 HTTP）逐条合成 24kHz 单声道 WAV -> 按字幕时间轴拼成一条与视频
-// 等长的 48kHz 单声道音轨 -> 与视频混流为额外一条音轨（源音轨全部保留，但
-// default disposition 让给配音轨，否则播放器仍放原声）。
+// 等长的 48kHz 单声道音轨 -> 与视频混流。混流有两种输出结构：
+// 多轨（默认，mix=false）保留源音轨、追加额外一条配音轨，default
+// disposition 让给配音轨（否则播放器仍放原声）；混音（mix=true）把源音轨与配音
+// 轨按 -30~+12 dB 的配音音量 amix 成唯一一条音轨，源音轨不再单独存在。
 //
 // 三步都有自检，宁可报错也不交废成品：单条 WAV 的 RIFF/data 段非空 -> 组装后
-// 用 volumedetect 确认整条配音轨不是全静音 -> 混流后回探成品音轨数必须比源多 1。
+// 用 volumedetect 确认整条配音轨不是全静音 -> 混流后回探成品音轨数（多轨 = 源 + 1，
+// 混音 = 1）。
 //
 // 引擎事实（依据 submodule native/qwentts.cpp 的 tools/tts-server.cpp 与
 // src/tts-server.h，勿凭印象改动）：
@@ -641,10 +644,78 @@ function buildDubAssemblyArgs({ wavEntries, durationMs, outPath } = {}) {
   return args;
 }
 
-// 混流：保留源全部流（-map 0），把组装好的音轨作为最后一条音频流加入。
-// 新音轨序号 = 源音频流数量；MP4 字幕转 mov_text，MKV 原样复制。
+// 混音模式的配音音量范围（dB）。界面数字输入用同一组上下限。
+const MIX_VOLUME_MIN_DB = -30;
+const MIX_VOLUME_MAX_DB = 12;
+
+// 配音音量归一：非数值（含字符串 "3"、NaN、null）回 0，越界钳到 [-30, +12]。
+// 钳制而不报错的取舍：-45 dB 钳到 -30 dB 方向一致（用户要的就是"更小声"），为这个
+// 纯偏好让整条配音任务失败不划算；非数值没有可推断的意图，回默认 0（与说话人的归一
+// 风格一致：只影响听感，不让任务失败）。
+function normalizeMixVolumeDb(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.min(MIX_VOLUME_MAX_DB, Math.max(MIX_VOLUME_MIN_DB, value));
+}
+
+// 字幕流：不保留时 -sn；MP4 系列转 mov_text（mov muxer 装不下 SRT/ASS），其余原样复制
+function pushSubtitleArgs(args, { ext, keepSubtitle }) {
+  if (!keepSubtitle) {
+    args.push('-sn');
+  } else if (ext === 'mp4' || ext === 'm4v' || ext === 'mov') {
+    args.push('-c:s', 'mov_text');
+  } else {
+    args.push('-c:s', 'copy');
+  }
+}
+
+// 混音分支：源音轨与配音轨经 amix 合成唯一一条音轨输出。
+// 与多轨分支的差别全在容器选项里：没有 -map 0（源音轨不再保留），map 的是滤镜标签，
+// 也没有 -c copy（音频必须重编码）。结果就是播放器里只有一条音轨，无法再切回纯原声。
+function buildDubMixArgs({ video, audioWav, outPath, keepSubtitle, language, title, volumeDb }) {
+  const ext = path.extname(outPath).toLowerCase().replace(/^\./, '');
+  const filter = [
+    // 只调配音侧：用户调的是「配音相对原声响多少」，原声保持原样（volume 的 dB 后缀
+    // 内置 ffmpeg 实测可解析；混音音量恒写出来，0 dB 即恒等变换）
+    `[1:a]volume=${volumeDb}dB[dub]`,
+    // normalize=0：amix 默认按输入路数归一化（两路各压一半），而音量已由 dB 精确控制，
+    // 不需要二次归一。duration=longest：dub.wav 与视频等长，取较长者不会截掉原声尾巴。
+    // 两路采样率/声道不同由 amix 前的自动转换统一，输出再按 -ar/-ac 落成 48kHz 立体声。
+    '[0:a:0][dub]amix=inputs=2:duration=longest:normalize=0[mixout]',
+  ].join(';');
+  const args = [
+    '-hide_banner',
+    '-i', video,
+    '-i', audioWav,
+    '-filter_complex', filter,
+    // 画面复制 + 混音结果这一条音轨
+    '-map', '0:v',
+    '-map', '[mixout]',
+  ];
+  // 字幕照旧带上（-map 0:s? 的问号让没有字幕的源不报错）
+  if (keepSubtitle) args.push('-map', '0:s?');
+  args.push(
+    '-c:v', 'copy',
+    '-c:a', 'aac',
+    '-b:a', '192k',
+    // -ac 2 兜住声道布局：5.1 原声配单声道配音也要落成播放器默认能放的两声道
+    '-ar', '48000',
+    '-ac', '2',
+    '-metadata:s:a:0', `language=${containerLanguageTag(language, ext)}`,
+    '-metadata:s:a:0', `title=${title || t('main.dub.trackTitle')}`,
+  );
+  pushSubtitleArgs(args, { ext, keepSubtitle });
+  // 唯一一条音轨即默认轨（单轨没有别人的 default 要摘）
+  args.push('-disposition:a:0', 'default');
+  args.push('-n', '-nostats', '-progress', 'pipe:1', outPath);
+  return args;
+}
+
+// 混流：默认（mix=false）保留源全部流（-map 0），把组装好的音轨作为最后一条音频流
+// 加入。新音轨序号 = 源音频流数量；MP4 字幕转 mov_text，MKV 原样复制。
 // 默认音轨必须换成配音：播放器按 default disposition 选轨，源音轨一直是默认时
 // 用户听到的还是原声，会以为"配音没混进去"（实测反馈的正是这个现象）。
+// mix=true 且源有音轨时改走 buildDubMixArgs；源本来没有音轨则混音无从谈起，仍走
+// 多轨分支（那种情况下它本来就只有配音一条音轨）。
 function buildDubMuxArgs({
   video,
   audioWav,
@@ -653,6 +724,8 @@ function buildDubMuxArgs({
   keepSubtitle = true,
   language = 'auto',
   title,
+  mix = false,
+  mixVolumeDb = 0,
 } = {}) {
   if (typeof video !== 'string' || !video) {
     throw dubError('FFGUI_DUB_INVALID_JOB', t('main.dub.errRequired', { field: 'video' }));
@@ -665,6 +738,17 @@ function buildDubMuxArgs({
   }
   const index = Math.max(0, Math.trunc(Number(sourceAudioCount) || 0));
   const ext = path.extname(outPath).toLowerCase().replace(/^\./, '');
+  if (mix === true && index > 0) {
+    return buildDubMixArgs({
+      video,
+      audioWav,
+      outPath,
+      keepSubtitle,
+      language,
+      title,
+      volumeDb: normalizeMixVolumeDb(mixVolumeDb),
+    });
+  }
   const args = [
     '-hide_banner',
     '-i', video,
@@ -684,14 +768,7 @@ function buildDubMuxArgs({
   // 再把配音轨设为默认。源音轨一条不少地保留，可在播放器里手动切回。
   for (let i = 0; i < index; i += 1) args.push(`-disposition:a:${i}`, '0');
   args.push(`-disposition:a:${index}`, 'default');
-  if (!keepSubtitle) {
-    args.push('-sn');
-  } else if (ext === 'mp4' || ext === 'm4v' || ext === 'mov') {
-    // MP4 系列不能装 SRT/ASS 原样，转 mov_text
-    args.push('-c:s', 'mov_text');
-  } else {
-    args.push('-c:s', 'copy');
-  }
+  pushSubtitleArgs(args, { ext, keepSubtitle });
   args.push('-n', '-nostats', '-progress', 'pipe:1', outPath);
   return args;
 }
@@ -769,6 +846,11 @@ function validateDubJob(job) {
   };
   // 说话人只影响音色，白名单外的值直接回默认（不报错），见 normalizeSpeaker
   normalized.speaker = normalizeSpeaker(job.speaker);
+  // 混音开关只认布尔 true：字符串 "true"、1、null 之类一律按 false 处理，默认保持
+  // 现有多轨行为。开关只决定输出结构，没有可"钳制"的中间态，宽松归一即可。
+  normalized.mix = job.mix === true;
+  // 配音音量（dB）：非数值回 0、越界钳到 [-30, +12]，见 normalizeMixVolumeDb
+  normalized.mixVolumeDb = normalizeMixVolumeDb(job.mixVolumeDb);
   if (job.language !== undefined && job.language !== null && job.language !== '') {
     const language = String(job.language).toLowerCase();
     if (!LANGUAGE_IDS.has(language)) {
@@ -2032,6 +2114,8 @@ function createDubService(options = {}) {
         keepSubtitle: true,
         language: normalized.language,
         title: t('main.dub.trackTitle'),
+        mix: normalized.mix,
+        mixVolumeDb: normalized.mixVolumeDb,
       });
       state.control.child = null;
       const muxed = await runFfmpegTask({
@@ -2058,8 +2142,12 @@ function createDubService(options = {}) {
         throw dubError('FFGUI_DUB_MUX', t('main.dub.errMux', { reason: muxed.error || '' }));
       }
 
-      // 混流自检：成品必须比源多一条音轨，否则等于交了一个没配音的文件
-      const expectedAudio = video.audioCount + 1;
+      // 混流自检：多轨模式成品必须比源多一条音轨，否则等于交了一个没配音的文件；
+      // 混音模式源音轨已被 amix 吸收，成品只剩一条（源无音轨时 mix 走的是多轨分支，
+      // 期望值同样由 video.audioCount + 1 得到，恰好也是 1）
+      const expectedAudio = normalized.mix && video.audioCount > 0
+        ? 1
+        : video.audioCount + 1;
       const output = await probeVideo(outPath);
       if (!output.ok) {
         throw dubError('FFGUI_DUB_MUX', t('main.dub.errMux', {
@@ -2212,11 +2300,14 @@ module.exports = {
   inspectWavBuffer,
   parseMaxVolumeDb,
   normalizeSpeaker,
+  normalizeMixVolumeDb,
   // 常量
   LANGUAGES,
   MODEL_VARIANTS,
   DEFAULT_SPEAKERS,
   DEFAULT_SPEAKER,
+  MIX_VOLUME_MIN_DB,
+  MIX_VOLUME_MAX_DB,
   MAX_CUES,
   MAX_CUE_CHARS,
   MAX_AMIX_INPUTS,

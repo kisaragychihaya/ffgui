@@ -886,6 +886,9 @@
     "containerMkv": "MKV",
     "hintSpeaker": "The speaker decides the dubbing voice; synthesis uses a fixed random seed, so the same subtitle gives the same result every time. Selectable once the engine is ready and the model is downloaded.",
     "hintOptions": "The synthesized voice is mixed into the video as an additional track; the original audio track is kept and can be switched in a player.",
+    "lblMix": "Mix output (original + dub in one track)",
+    "lblMixVolume": "Dub volume (dB)",
+    "hintMix": "When checked, the original audio and the dub are mixed into a single track: the original can no longer be muted on its own, and the volume applies to the dub side only (-30 to +12 dB; 0 keeps the dub at its original loudness). If the source video has no audio track, the output still holds only the dub track and the volume setting has no effect.",
     "btnStart": "Start dubbing",
     "hintRunning": "Task running: changing files or options and leaving the page are blocked.",
     "hintEngineMissing": "Install the dubbing engine before starting.",
@@ -941,6 +944,8 @@
       "errContainer": "Invalid output container",
       "errVariant": "Invalid model variant",
       "errSpeaker": "Invalid speaker",
+      "errMix": "Invalid mix option",
+      "errMixVolume": "Dub volume must be between {{min}} and {{max}} dB",
       "errNoCues": "The subtitle file contains no usable lines"
     },
     "lang": {

@@ -113,9 +113,18 @@
             <option value="mkv" data-i18n="dub.containerMkv">MKV</option>
           </select>
         </label>
+        <label class="check-line">
+          <input id="chk-mix" type="checkbox" />
+          <span data-i18n="dub.lblMix">混音输出（原声与配音合成一条音轨）</span>
+        </label>
+        <label class="form-item">
+          <span class="form-label" data-i18n="dub.lblMixVolume">配音音量 (dB)</span>
+          <input id="num-mix-volume" type="number" min="-30" max="12" step="1" value="0" disabled />
+        </label>
       </div>
       <p class="caps-info" data-i18n="dub.hintSpeaker">说话人决定配音音色；合成本身用固定的随机种子，同一份字幕每次结果一致。引擎就绪、模型下载完成后才能选择。</p>
-      <p class="caps-info" data-i18n="dub.hintOptions">合成出的配音会作为新的音轨混入视频，原音轨保留，可在播放器中切换。</p>
+      <p id="options-hint" class="caps-info" data-i18n="dub.hintOptions">合成出的配音会作为新的音轨混入视频，原音轨保留，可在播放器中切换。</p>
+      <p id="mix-hint" class="caps-info hidden" data-i18n="dub.hintMix">勾选后原声与配音混成唯一一条音轨：原声无法再单独关闭，音量只调配音一侧（-30 ~ +12 dB，0 表示配音与原始响度相同）。源视频本来没有音轨时仍只输出配音轨，此时音量参数不生效。</p>
     </section>
 
     <!-- 进度与操作 -->

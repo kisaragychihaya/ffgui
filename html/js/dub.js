@@ -1,7 +1,9 @@
 // 字幕配音页逻辑
 // 流程：选视频 + 选字幕（dubParseSubtitle 解析成台词）→ 检查引擎与模型
 // （dubStatus；缺模型时经 dubDownloadModel 下载）→ 选发音语言 / 说话人 / 推理后端 /
-// 输出容器 → dubStart 合成配音并混入新音轨，进度与日志经 onDubEvent 推送。
+// 输出容器 → dubStart 合成配音并混流，进度与日志经 onDubEvent 推送。混流结构由
+// 「混音输出」决定：不勾选时追加一条配音轨（原音轨保留）；勾选后原声与配音按配音
+// 音量（-30 ~ +12 dB，只调配音侧）合成唯一一条音轨。
 // 安全约束：字幕文本、文件路径这些来路不可信的字符串一律用 textContent 写入，
 // 绝不拼接 HTML；渲染层只传路径与选项这类数据，命令行与引擎调用由主进程负责。
 (function () {
@@ -20,6 +22,9 @@
   const MIRRORS = ['official', 'hfmirror', 'modelscope'];
   const BACKENDS = ['auto', 'vulkan', 'cpu'];
   const CONTAINERS = ['same', 'mp4', 'mkv'];
+  // 混音模式的配音音量上下限（dB），与 main/dub.js 的 MIX_VOLUME_* 保持一致
+  const MIX_VOLUME_MIN_DB = -30;
+  const MIX_VOLUME_MAX_DB = 12;
 
   // 说话人：customvoice 模型的固定音色，与 main/dub.js 的 DEFAULT_SPEAKERS 一一对应。
   // 显示名就是值（上游说话人本就是英文名，不翻译）；正常由 status().speakers 下发，
@@ -111,6 +116,20 @@
     return Math.max(0, Math.min(100, Math.round(num)));
   }
 
+  // 配音音量（dB）：空输入/非法值回 0，越界钳到 [-30, +12]（与主进程
+  // normalizeMixVolumeDb 同一套规则，界面先把值钳好，提交的结构永远在范围内）
+  function clampMixVolumeDb(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 0;
+    return Math.min(MIX_VOLUME_MAX_DB, Math.max(MIX_VOLUME_MIN_DB, num));
+  }
+
+  // 音量是否落在合法区间（只有数值才算合法，字符串 "3" 不行）
+  function inMixVolumeRange(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+    return value >= MIX_VOLUME_MIN_DB && value <= MIX_VOLUME_MAX_DB;
+  }
+
   // 主进程返回的台词归一化：字段类型不符一律丢弃，按起始时间排序
   function normalizeCues(list) {
     if (!Array.isArray(list)) return [];
@@ -147,6 +166,16 @@
     if (!CONTAINERS.includes(job.container)) errors.push(t('dub.logic.errContainer'));
     if (!VARIANTS.includes(job.variant)) errors.push(t('dub.logic.errVariant'));
     if (!allowedSpeakers.includes(job.speaker)) errors.push(t('dub.logic.errSpeaker'));
+    // 混音选项：mix 必须是布尔（读复选框得到，非布尔说明调用方传错类型），
+    // 只有勾选混音时音量才有意义、才校验区间（主进程另有归一，这里拦在提交前）
+    if (typeof job.mix !== 'boolean') {
+      errors.push(t('dub.logic.errMix'));
+    } else if (job.mix && !inMixVolumeRange(job.mixVolumeDb)) {
+      errors.push(t('dub.logic.errMixVolume', {
+        min: MIX_VOLUME_MIN_DB,
+        max: MIX_VOLUME_MAX_DB,
+      }));
+    }
     return errors;
   }
 
@@ -161,6 +190,8 @@
       backend: options.backend,
       container: options.container,
       variant: options.variant,
+      mix: options.mix === true,
+      mixVolumeDb: clampMixVolumeDb(options.mixVolumeDb),
     };
   }
 
@@ -203,6 +234,10 @@
     speaker: $('sel-speaker'),
     backend: $('sel-backend'),
     container: $('sel-container'),
+    mix: $('chk-mix'),
+    mixVolume: $('num-mix-volume'),
+    optionsHint: $('options-hint'),
+    mixHint: $('mix-hint'),
     start: $('btn-start'),
     cancel: $('btn-cancel'),
     status: $('status-text'),
@@ -614,6 +649,15 @@
     return MIRRORS.includes(value) ? value : MIRRORS[0];
   }
 
+  function currentMix() {
+    return els.mix.checked === true;
+  }
+
+  // 数字输入读出来可能是空串或乱填的内容，统一钳到 [-30, +12]
+  function currentMixVolume() {
+    return clampMixVolumeDb(els.mixVolume.value);
+  }
+
   function currentJob() {
     return buildDubJob({
       id: state.jobId,
@@ -624,6 +668,8 @@
       backend: els.backend.value,
       container: els.container.value,
       variant: currentVariant(),
+      mix: currentMix(),
+      mixVolumeDb: currentMixVolume(),
     });
   }
 
@@ -677,6 +723,15 @@
     els.startHint.textContent = t('dub.hintPlan', { count: state.cues.length });
   }
 
+  // 混音模式的两个控件联动：未勾选混音时音量输入禁用；提示行只显示当前模式对应的
+  // 一段（多轨「原音轨保留」与混音「只有一条音轨」互相矛盾，不能同时出现）
+  function renderMix() {
+    const mix = currentMix();
+    els.mixVolume.disabled = state.running || state.busy || !mix;
+    els.optionsHint.classList.toggle('hidden', mix);
+    els.mixHint.classList.toggle('hidden', !mix);
+  }
+
   function updateButtons() {
     const status = state.status || {};
     const busy = state.running || state.busy;
@@ -691,10 +746,12 @@
     els.speaker.disabled = busy || !engineReady();
     els.backend.disabled = busy;
     els.container.disabled = busy;
+    els.mix.disabled = busy;
     els.download.disabled = busy || downloading || status.state !== 'no-model';
     els.cancelDownload.disabled = busy;
     els.start.disabled = busy || downloading || !canStart();
     els.cancel.classList.toggle('hidden', !state.running);
+    renderMix();
     updateStartHint();
   }
 
@@ -911,6 +968,15 @@
   for (const el of [els.language, els.speaker, els.backend, els.container, els.variant]) {
     el.addEventListener('change', updateButtons);
   }
+
+  // 混音开关与配音音量：开关决定音量输入是否可用；音量输入在键入时只刷新按钮与提示，
+  // 失焦/回车（change）时才把钳制后的值写回输入框（填 99 会变成 12），不打断输入过程
+  els.mix.addEventListener('change', updateButtons);
+  els.mixVolume.addEventListener('input', updateButtons);
+  els.mixVolume.addEventListener('change', () => {
+    els.mixVolume.value = String(currentMixVolume());
+    updateButtons();
+  });
 
   // ---------- 拖拽添加 ----------
   window.addEventListener('dragover', (e) => e.preventDefault());

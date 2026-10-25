@@ -14,7 +14,12 @@ Vivian，服务层再验一次非法说话人不报错照常配音）；配音�
 段的 WAV 在第 N 条就报 FFGUI_DUB_SYNTH、组装音轨全静音报 FFGUI_DUB_SILENT（假 ffmpeg 按
 `volumedetect` 参数分支回 -91.0 dB）、成品音轨数不对报 FFGUI_DUB_MUX 并删成品。mock 用
 `producedOutputs` 记住本任务写出的文件来区分「源探测」与「混流后回探」，判别混流调用要看
-2 个 -i 且无 -filter_complex——组装命令里也有 -map（[dubout]），不能拿 -map 判）；dub 页的纯逻辑 UI 测试文件
+2 个 -i 且无 -filter_complex——组装命令里也有 -map（[dubout]），不能拿 -map 判；混音分支
+（mix = true）自带 -filter_complex，该判据不适用，按「args 最后一个元素 = 输出路径」定位）；
+混音模式另有专项：argv 含 `[1:a]volume=<dB>dB` + `amix=inputs=2:duration=longest:normalize=0`
++ `-ac 2`、只有一次 `-c:a`、无 `-map 1:a:0` 与多轨 disposition、源无音轨时退化为单配音轨，
+validateDubJob 的 mix（只认布尔 true）/ mixVolumeDb（越界钳制到 -30~+12、非数值回 0），服务层
+再验混音成功（回探期望 1 条）与回探到 2 条时报 FFGUI_DUB_MUX；dub 页的纯逻辑 UI 测试文件
 （`scripts/dub-ui.test.cjs`，仿 `cd-ui.test.cjs` 注入真实 `locales/zh-CN.json`）尚未建立，
 新增后要一并加进 `package.json` 的 `npm test`；
 侧车/页面专项用
@@ -39,7 +44,9 @@ ModelScope；选 ModelScope + Q4_K_M 时主进程会打 `[ffgui]` 日志并回�
 Windows 是 `resources/aria2/aria2c.exe`，macOS 是 `resources/bin/aria2/aria2c`。下载中途取消、
 重进页面再点下载应续传而不是从 0 开始；`FFGUI_ARIA2` 指向不存在的路径 + PATH 里也没有
 aria2c 时，应自动回退内置 https 下载）、
-逐条合成试听、混流输出与取消清理（需 `bin/tts/` 中有 tts-server 或设置 `FFGUI_TTS_SERVER`）。
+逐条合成试听、混流输出与取消清理（需 `bin/tts/` 中有 tts-server 或设置 `FFGUI_TTS_SERVER`）、
+「混音输出」勾选后成品只剩一条音轨（播放器里切不到原声）、配音音量能听出变化（-30 dB 几乎只剩
+原声，+12 dB 配音明显压过原声）、未勾选时音量输入应禁用且提示行切回「原音轨保留」那段。
 
 ## 已知问题
 
@@ -103,7 +110,13 @@ aria2c 时，应自动回退内置 https 下载）、
   一次下载内不切换实现。**macOS 的 aria2c 由 CI 现编**（官方没有 darwin 构建），编译失败时
   打包继续但没有内置二进制；WOA 的内置二进制是 x64，靠系统模拟运行。
   引擎缺失或启动失败必须明确报错，
-  不能静默产出无人声音轨。引擎路径可用 `FFGUI_TTS_SERVER` 覆盖。输出策略是「源音轨全保留 +
-  追加一条配音轨」，并把配音设为默认音轨（源音轨的 default 摘掉）；**没有「替换原声」开关**，
-  想只听配音需在播放器里切轨（或后续再加选项）。体积：Vulkan 版约 41MB
+  不能静默产出无人声音轨。引擎路径可用 `FFGUI_TTS_SERVER` 覆盖。默认输出策略是「源音轨全保留 +
+  追加一条配音轨」，并把配音设为默认音轨（源音轨的 default 摘掉）；页面另有「混音输出」开关
+  （job.mix），勾选后源音轨与配音 amix 成唯一一条音轨、源音轨不再单独存在，配音侧音量可调
+  -30~+12 dB（mixVolumeDb）。**「只保留配音、丢掉原声」仍没有直接选项**：混音是叠加而不是替换，
+  想完全去掉原声得等后续再加「替换原声」开关。字幕流的写法按**输出容器**选：MP4 系列转
+  mov_text、其余 `-c:s copy`（混音分支用 `-map 0:s?`）。因此**源字幕是 mov_text 的 MP4 转 MKV
+  会失败**（matroska 不支持 mov_text，报 `Subtitle codec mov_text is not supported`）——实测
+  混音与多轨两个分支都一样，属既有行为，真要转化得改 `-c:s copy` 为按容器挑文本字幕编码器
+  （图片字幕 PGS/VobSub 又要另走一路）。体积：Vulkan 版约 41MB
   （其中 `ggml-vulkan.dll` 38MB，含编译好的 shader），CPU 版约 2.5MB，安装包随之增大

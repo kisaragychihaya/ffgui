@@ -1,9 +1,10 @@
 'use strict';
 
 // 运行：node --test scripts/cd-ui.test.cjs
-// CD 抓轨页（html/cdrip.html + html/js/cd.js）的纯逻辑测试：
+// 光盘页·音乐 CD 侧（html/disc.html + html/js/disc.cd.js）的纯逻辑测试：
 // 设备/轨条目归一、MusicBrainz 候选与逐曲覆盖、任务构造与校验、
-// 格式化，以及页面本身的安全约定（CSP、无 innerHTML、theme.js 顺序）。
+// 格式化，以及页面本身的安全约定（CSP、无 innerHTML、脚本顺序、CD 侧控件齐备）。
+// 页面已与视频光盘侧合并到同一个 html/disc.html，本文件只覆盖 CD 侧脚本与它的控件。
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -12,8 +13,10 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const repo = path.resolve(__dirname, '..');
-const cdHtml = fs.readFileSync(path.join(repo, 'html/cdrip.html'), 'utf8');
-const cdSrc = fs.readFileSync(path.join(repo, 'html/js/cd.js'), 'utf8');
+// 合并后的统一光盘页：HTML 与样式由视频侧/CD 侧共用，本文件只挑 CD 侧的脚本与控件断言
+const discHtml = fs.readFileSync(path.join(repo, 'html/disc.html'), 'utf8');
+const cdCss = fs.readFileSync(path.join(repo, 'html/css/cd.css'), 'utf8');
+const cdSrc = fs.readFileSync(path.join(repo, 'html/js/disc.cd.js'), 'utf8');
 
 // 标记行自带中文说明（「（node:test 按标记整段提取…）」），必须整行丢弃，
 // 只按前缀切会把行尾残片留在被提取的代码里，导致 vm 报 SyntaxError。
@@ -60,7 +63,7 @@ const LOGIC_EXPORTS = [
 ];
 const logicApi = vm.runInThisContext(
   `(function () {\n${logic}\n  return { ${LOGIC_EXPORTS.join(', ')} };\n})()`,
-  { filename: 'html/js/cd.js#logic' },
+  { filename: 'html/js/disc.cd.js#logic' },
 );
 const {
   isValidCompression, isValidParanoia, formatDuration, normalizeTrack,
@@ -270,24 +273,33 @@ test('格式化：时长、字节、DiscID 缩短显示', () => {
 
 // ---------- 页面安全约定 ----------
 
-test('页面：CSP 不放行 media-src，脚本只引 i18n/theme/cd 且顺序正确', () => {
-  const csp = cdHtml.match(/content="([^"]*)"/);
+test('页面：CSP 不放行 media-src，脚本顺序 i18n → theme → 两侧脚本 → 类型控制器', () => {
+  const csp = discHtml.match(/content="([^"]*)"/);
   assert.ok(csp, '须声明 CSP');
   assert.match(csp[1], /default-src 'self'/);
   assert.match(csp[1], /style-src 'self'/);
   assert.match(csp[1], /script-src 'self'/);
   // 本页不预览任何本地媒体
-  assert.ok(!/media-src/.test(csp[1]), 'CD 抓轨页不放行 media-src');
-  assert.ok(!/img-src/.test(csp[1]), 'CD 抓轨页不放行 img-src');
+  assert.ok(!/media-src/.test(csp[1]), '光盘页不放行 media-src');
+  assert.ok(!/img-src/.test(csp[1]), '光盘页不放行 img-src');
 
-  const i18nIdx = cdHtml.indexOf('js/i18n.js');
-  const themeIdx = cdHtml.indexOf('js/theme.js');
-  const pageIdx = cdHtml.indexOf('js/cd.js');
-  assert.ok(i18nIdx !== -1 && themeIdx !== -1 && pageIdx !== -1);
-  assert.ok(i18nIdx < themeIdx && themeIdx < pageIdx, '加载顺序须为 i18n.js → theme.js → js/cd.js');
-  const title = cdHtml.match(/<html[^>]*data-i18n-title="([^"]+)"/);
+  // 合并页的脚本清单固定：i18n → theme → 视频侧 → CD 侧 → 类型控制器
+  const scriptSrcs = [...discHtml.matchAll(/<script src="([^"]+)"><\/script>/g)].map((m) => m[1]);
+  assert.deepEqual(scriptSrcs, [
+    'js/i18n.js', 'js/theme.js', 'js/disc.dvd.js', 'js/disc.cd.js', 'js/disc.type.js',
+  ], 'CD 侧脚本须排在 i18n.js / theme.js 之后、类型控制器之前');
+
+  const i18nIdx = discHtml.indexOf('js/i18n.js');
+  const themeIdx = discHtml.indexOf('js/theme.js');
+  const pageIdx = discHtml.indexOf('js/disc.cd.js');
+  const typeIdx = discHtml.indexOf('js/disc.type.js');
+  assert.ok(i18nIdx !== -1 && themeIdx !== -1 && pageIdx !== -1 && typeIdx !== -1);
+  assert.ok(i18nIdx < themeIdx, 'i18n.js 必须最先加载');
+  assert.ok(themeIdx < pageIdx, '加载顺序须为 i18n.js → theme.js → js/disc.cd.js');
+  assert.ok(pageIdx < typeIdx, '类型控制器须在两侧脚本之后加载');
+  const title = discHtml.match(/<html[^>]*data-i18n-title="([^"]+)"/);
   assert.ok(title, '<html> 须带 data-i18n-title');
-  assert.equal(title[1], 'cd.title');
+  assert.equal(title[1], 'disc.title');
 });
 
 test('页面：不得把译文或盘上字符串拼进 innerHTML', () => {
@@ -299,8 +311,9 @@ test('页面：不得把译文或盘上字符串拼进 innerHTML', () => {
 test('页面：引用的键都在词典里', () => {
   const zh = zhDict;
   const keys = new Set();
-  for (const m of cdHtml.matchAll(/data-i18n="([^"]+)"/g)) keys.add(m[1]);
-  for (const m of cdHtml.matchAll(/data-i18n-attr="([^"]+)"/g)) {
+  // HTML 是两侧共用的，其中的视频侧与类型卡片键也一并校验（同一个词典文件）
+  for (const m of discHtml.matchAll(/data-i18n="([^"]+)"/g)) keys.add(m[1]);
+  for (const m of discHtml.matchAll(/data-i18n-attr="([^"]+)"/g)) {
     for (const pair of m[1].split(';')) {
       const idx = pair.indexOf(':');
       if (idx >= 0) keys.add(pair.slice(idx + 1).trim());
@@ -309,4 +322,27 @@ test('页面：引用的键都在词典里', () => {
   for (const m of cdSrc.matchAll(/\bt\(\s*'([\w.-]+)'/g)) keys.add(m[1]);
   const missing = [...keys].filter((key) => dictLookup(zh, key) === undefined);
   assert.deepEqual(missing, [], 'HTML/JS 引用的键必须都在 zh-CN 词典里');
+});
+
+test('页面：CD 侧关键控件齐备、面板初始隐藏且引入 cd.css', () => {
+  for (const id of [
+    'cd-source-panel', 'cd-sel-drive', 'cd-btn-probe', 'cd-btn-refresh-drives',
+    'cd-drive-wrap', 'cd-drive-hint', 'tracks-panel', 'track-list', 'btn-lookup',
+    'cd-meta', 'mb-result', 'meta-panel', 'input-album', 'input-album-artist',
+    'input-artist', 'input-date', 'input-genre', 'sel-compression',
+    'cd-output-panel', 'sel-paranoia', 'cd-input-outdir', 'cd-btn-pick-dir',
+    'cd-action-panel', 'cd-btn-start', 'cd-btn-cancel', 'cd-status-text',
+    'cd-start-hint', 'cd-progress-bar', 'cd-log-area',
+  ]) {
+    assert.ok(new RegExp(`id="${id}"`).test(discHtml), `缺少 CD 侧控件 ${id}`);
+  }
+  // CD 侧外壳面板（含 tracks-panel）初始隐藏，由 disc.type.js 按所选类型显隐
+  for (const id of ['cd-source-panel', 'tracks-panel', 'meta-panel', 'cd-output-panel', 'cd-action-panel']) {
+    assert.match(discHtml, new RegExp(`class="panel hidden" id="${id}"`),
+      `CD 侧面板 ${id} 须初始隐藏`);
+  }
+  // CD 侧样式与视频侧样式分离，合并页两套都要引入
+  assert.match(discHtml, /css\/cd\.css/, '须引用 cd.css');
+  assert.ok(!/style="/.test(cdCss), 'cd.css 不得含内联样式');
+  assert.ok(!/@import/.test(cdCss), 'cd.css 不得引入远程资源');
 });

@@ -44,10 +44,6 @@
       window.location.href = 'disc.html';
       return;
     }
-    if (feature === 'cdrip') {
-      window.location.href = 'cdrip.html';
-      return;
-    }
     if (feature === 'dub') {
       window.location.href = 'dub.html';
       return;

@@ -1,4 +1,4 @@
-// 光盘抓取页逻辑
+// 光盘页·视频光盘侧逻辑（原 disc.js 整体迁移，由 disc.type.js 选择类型后展示）
 // 来源：ISO 镜像 / 已提取目录（discPickSource）+ 物理光驱（discListDrives）；
 // 探测（discProbe）返回标题列表，默认只选最长标题；每个标题可单独挑选音轨与
 // 字幕轨。选轨语义：null=全部保留，[]=一条都不保留，非空数组=只保留指定轨。
@@ -227,7 +227,6 @@
   // ---------- DOM ----------
   const $ = (id) => document.getElementById(id);
   const els = {
-    back: $('btn-back'),
     pickIso: $('btn-pick-iso'),
     pickFolder: $('btn-pick-folder'),
     selDrive: $('sel-drive'),
@@ -915,13 +914,6 @@
   }
 
   // ---------- 事件绑定 ----------
-  els.back.addEventListener('click', () => {
-    if (state.running) {
-      log(t('disc.logBackRunning'));
-      return;
-    }
-    window.location.href = 'index.html';
-  });
   els.pickIso.addEventListener('click', async () => {
     if (state.running || state.probing) return;
     const res = await window.ffgui.discPickSource('iso');
@@ -1020,6 +1012,12 @@
     });
   }
 
-  refreshDrives();
+  // 类型切换控制器（disc.type.js）经此钩子查询运行状态、惰性枚举光驱；
+  // 加载即刷新改由控制器在选择类型时触发，本侧不再自动枚举。
+  window.__ffguiDiscPage = {
+    isRunning: () => !!state.running,
+    refreshDrives: () => refreshDrives(),
+  };
+
   renderSource();
 })();

@@ -387,7 +387,8 @@ test('主题：所有页面先加载 theme.js，样式与 preload 暴露主题 A
   for (const page of ['index', 'convert', 'merge', 'clip', 'record', 'disc']) {
     const html = fs.readFileSync(path.join(repo, `html/${page}.html`), 'utf8');
     const themeIdx = html.indexOf('js/theme.js');
-    const pageIdx = html.indexOf(`js/${page}.js`);
+    // disc.html 拆成 disc.dvd.js / disc.cd.js / disc.type.js 三个页面脚本，取首个
+    const pageIdx = page === 'disc' ? html.indexOf('js/disc.dvd.js') : html.indexOf(`js/${page}.js`);
     assert.ok(themeIdx !== -1 && pageIdx !== -1 && themeIdx < pageIdx, `${page}.html 须先加载 theme.js 再加载页面脚本`);
   }
   const css = fs.readFileSync(path.join(repo, 'html/css/style.css'), 'utf8');

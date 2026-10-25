@@ -1,4 +1,4 @@
-// CD 抓轨页逻辑
+// 光盘页·音乐 CD 侧逻辑（原 cd.js 整体迁移，由 disc.type.js 选择类型后展示）
 // 来源：物理光驱（cdListDrives 复用光盘侧车枚举，设备名按平台归一为
 // libcdio 可接受的盘符 / /dev/rdiskN / /dev/srN）。
 // 流程：读取光盘（cdProbe 读 TOC，不读音频）→ 可选 MusicBrainz 查询填标签 →
@@ -178,11 +178,10 @@
   // ---------- DOM ----------
   const $ = (id) => document.getElementById(id);
   const els = {
-    back: $('btn-back'),
-    selDrive: $('sel-drive'),
-    refreshDrives: $('btn-refresh-drives'),
-    driveHint: $('drive-hint'),
-    probe: $('btn-probe'),
+    selDrive: $('cd-sel-drive'),
+    refreshDrives: $('cd-btn-refresh-drives'),
+    driveHint: $('cd-drive-hint'),
+    probe: $('cd-btn-probe'),
     tracksPanel: $('tracks-panel'),
     cdMeta: $('cd-meta'),
     mbResult: $('mb-result'),
@@ -195,17 +194,17 @@
     date: $('input-date'),
     genre: $('input-genre'),
     compression: $('sel-compression'),
-    outputPanel: $('output-panel'),
+    outputPanel: $('cd-output-panel'),
     paranoia: $('sel-paranoia'),
-    outdir: $('input-outdir'),
-    pickDir: $('btn-pick-dir'),
-    actionPanel: $('action-panel'),
-    start: $('btn-start'),
-    cancel: $('btn-cancel'),
-    status: $('status-text'),
-    startHint: $('start-hint'),
-    progressBar: $('progress-bar'),
-    log: $('log-area'),
+    outdir: $('cd-input-outdir'),
+    pickDir: $('cd-btn-pick-dir'),
+    actionPanel: $('cd-action-panel'),
+    start: $('cd-btn-start'),
+    cancel: $('cd-btn-cancel'),
+    status: $('cd-status-text'),
+    startHint: $('cd-start-hint'),
+    progressBar: $('cd-progress-bar'),
+    log: $('cd-log-area'),
   };
 
   const state = {
@@ -764,13 +763,6 @@
   }
 
   // ---------- 事件绑定 ----------
-  els.back.addEventListener('click', () => {
-    if (state.running) {
-      log(t('cd.logBackRunning'));
-      return;
-    }
-    window.location.href = 'index.html';
-  });
   els.refreshDrives.addEventListener('click', refreshDrives);
   els.selDrive.addEventListener('change', () => {
     if (state.running || state.probing) return;
@@ -819,5 +811,10 @@
     });
   }
 
-  refreshDrives();
+  // 类型切换控制器（disc.type.js）经此钩子查询运行状态、惰性枚举光驱；
+  // 加载即刷新改由控制器在选择类型时触发，本侧不再自动枚举。
+  window.__ffguiCdPage = {
+    isRunning: () => !!state.running,
+    refreshDrives: () => refreshDrives(),
+  };
 })();

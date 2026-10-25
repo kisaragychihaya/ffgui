@@ -1,9 +1,11 @@
 'use strict';
 
 // 运行：node --test scripts/disc-ui.test.cjs
-// 光盘抓取页（html/disc.html + html/js/disc.js）的纯逻辑测试：
+// 光盘页（html/disc.html + html/js/disc.dvd.js / disc.cd.js / disc.type.js）的纯逻辑测试：
 // 选轨语义、job 构造、格式切换、MP4 图像字幕约束、默认最长标题、任务防重入、
-// 语言/时长/字节格式化，以及页面本身的安全约定（CSP、无 innerHTML、theme.js 顺序）。
+// 语言/时长/字节格式化、类型切换面板显隐，以及合并页本身的安全约定
+// （CSP、无 innerHTML、脚本顺序、控件齐备、三个脚本的 API 白名单）。
+// 音乐 CD 侧的纯逻辑（曲目归一、任务与元数据构造）见 scripts/cd-ui.test.cjs。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -13,19 +15,42 @@ const vm = require('node:vm');
 const repo = path.resolve(__dirname, '..');
 const discHtml = fs.readFileSync(path.join(repo, 'html/disc.html'), 'utf8');
 const discCss = fs.readFileSync(path.join(repo, 'html/css/disc.css'), 'utf8');
-const discSrc = fs.readFileSync(path.join(repo, 'html/js/disc.js'), 'utf8');
+const cdCss = fs.readFileSync(path.join(repo, 'html/css/cd.css'), 'utf8');
+// 视频光盘侧（原 disc.js）与音乐 CD 侧（原 cd.js）各是一个独立 IIFE，
+// 类型切换控制器 disc.type.js 只负责按类型显隐两组外壳面板
+const discSrc = fs.readFileSync(path.join(repo, 'html/js/disc.dvd.js'), 'utf8');
+const cdSrc = fs.readFileSync(path.join(repo, 'html/js/disc.cd.js'), 'utf8');
+const typeSrc = fs.readFileSync(path.join(repo, 'html/js/disc.type.js'), 'utf8');
+const PAGE_SCRIPTS = [
+  ['html/js/disc.dvd.js', discSrc],
+  ['html/js/disc.cd.js', cdSrc],
+  ['html/js/disc.type.js', typeSrc],
+];
 
 // 标记行自带中文说明（「（node:test 按标记整段提取…）」），必须整行丢弃，
 // 只按前缀切会把行尾残片留在被提取的代码里，导致 vm 报 SyntaxError。
 const START = '// ---------- 纯逻辑开始';
 const END = '// ---------- 纯逻辑结束';
-const discLines = discSrc.split(/\r?\n/);
-const startLine = discLines.findIndex((line) => line.trim().startsWith(START));
-const endLine = discLines.findIndex((line) => line.trim().startsWith(END));
-assert.ok(startLine >= 0, '找不到纯逻辑开始标记所在行');
-assert.ok(endLine > startLine, '找不到纯逻辑结束标记所在行');
-const logic = discLines.slice(startLine + 1, endLine).join('\n');
-assert.match(logic.trimStart(), /^(?:const|function|let)\b/, '纯逻辑段必须以代码开始，不得残留注释尾巴');
+
+// 按标记行整段提取纯逻辑并与测试在同一 realm 内求值（仅用函数包一层，避免污染本文件
+// 的顶层作用域）：跨 realm 求值得到的数组/对象原型不同，assert.deepEqual（strict）会
+// 误判为不等。视频侧与类型控制器两段纯逻辑共用这一提取器。
+function extractLogic(src, filename, names) {
+  const lines = src.split(/\r?\n/);
+  const startLine = lines.findIndex((line) => line.trim().startsWith(START));
+  const endLine = lines.findIndex((line) => line.trim().startsWith(END));
+  assert.ok(startLine >= 0, `${filename}：找不到纯逻辑开始标记所在行`);
+  assert.ok(endLine > startLine, `${filename}：找不到纯逻辑结束标记所在行`);
+  const logic = lines.slice(startLine + 1, endLine).join('\n');
+  assert.match(logic.trimStart(), /^(?:const|function|let)\b/,
+    `${filename}：纯逻辑段必须以代码开始，不得残留注释尾巴`);
+  // 纯逻辑段被要求在无 DOM 的环境里求值，不得偷偷摸 document
+  assert.ok(!/\bdocument\s*\./.test(logic), `${filename}：纯逻辑段不得引用 DOM`);
+  return vm.runInThisContext(
+    `(function () {\n${logic}\n  return { ${names.join(', ')} };\n})()`,
+    { filename: `${filename}#logic` },
+  );
+}
 
 // 纯逻辑段里的 t() 从 window.i18n 取词：这里注入真实 zh-CN 词典，
 // 使断言仍校验用户看到的中文原文（词典改动会在此暴露）。
@@ -51,18 +76,13 @@ global.window = {
   },
 };
 
-// 纯逻辑在与测试同一 realm 内求值（仅用函数包一层，避免污染本文件的顶层作用域）：
-// 跨 realm 求值得到的数组/对象原型不同，assert.deepEqual（strict）会误判为不等。
 const LOGIC_EXPORTS = [
   'normalizeTrackIds', 'formatsForMode', 'audioOptionsFor', 'defaultSelectedTitleIds',
   'hasImageSubtitles', 'buildTitleEntry', 'buildJob', 'validateJob',
   'formatDuration', 'formatBytes', 'formatSpeed', 'formatEta', 'streamLabel', 'passLabel',
   'MODES', 'MODE_FORMATS', 'AUDIO_OPTIONS', 'IMAGE_SUBTITLE_CODECS',
 ];
-const logicApi = vm.runInThisContext(
-  `(function () {\n${logic}\n  return { ${LOGIC_EXPORTS.join(', ')} };\n})()`,
-  { filename: 'html/js/disc.js#logic' },
-);
+const logicApi = extractLogic(discSrc, 'html/js/disc.dvd.js', LOGIC_EXPORTS);
 const {
   normalizeTrackIds, formatsForMode, audioOptionsFor, defaultSelectedTitleIds,
   hasImageSubtitles, buildTitleEntry, buildJob, validateJob,
@@ -399,7 +419,7 @@ test('进度阶段文案：pass 是阶段名，不能显示成「第 mux 遍」'
 // ---------- 任务防重入 ----------
 test('任务防重入：running 时 startJob 不得再次提交', async () => {
   // 复刻页面 startJob 的前置判断与状态机，验证重复点击只提交一次
-  const src = fs.readFileSync(path.join(repo, 'html/js/disc.js'), 'utf8');
+  const src = fs.readFileSync(path.join(repo, 'html/js/disc.dvd.js'), 'utf8');
   const fn = extractFunction(src, 'startJob');
   const calls = [];
   const ctx = {
@@ -440,8 +460,57 @@ test('任务防重入：running 时 startJob 不得再次提交', async () => {
   assert.equal(calls.length, 2, '任务结束后可以再次提交');
 });
 
+// ---------- 类型切换（disc.type.js） ----------
+// 合并页由类型控制器收口：它只按类型显隐外壳面板，两侧业务逻辑仍在各自 IIFE 里，
+// 所以这里只测这两个纯函数，不触碰 DOM。
+const TYPE_EXPORTS = ['canSwitchType', 'typePanels'];
+const typeApi = extractLogic(typeSrc, 'html/js/disc.type.js', TYPE_EXPORTS);
+const { canSwitchType, typePanels } = typeApi;
+
+test('类型切换：两侧都空闲才允许切换，任一任务进行中一律拒绝', () => {
+  const idle = { disc: false, cd: false };
+  assert.equal(canSwitchType('video', idle), true);
+  assert.equal(canSwitchType('cd', idle), true);
+  // 任一侧任务进行中都锁住类型，避免半路换面板后任务失去进度入口
+  assert.equal(canSwitchType('video', { disc: true, cd: false }), false);
+  assert.equal(canSwitchType('cd', { disc: false, cd: true }), false);
+  assert.equal(canSwitchType('cd', { disc: true, cd: true }), false);
+  assert.equal(canSwitchType('video', { disc: false, cd: true }), false, 'CD 抓轨中也不得切到视频侧');
+  // 状态缺省视为空闲
+  for (const running of [undefined, null, {}]) {
+    assert.equal(canSwitchType('video', running), true, `running=${String(running)} 视为空闲`);
+  }
+  // 只有 video / cd 两种类型，大小写不同或拼错都不得放行
+  for (const bad of ['', 'vedio', 'CD', 'Video', null, undefined, 0, 1, {}, ['video']]) {
+    assert.equal(canSwitchType(bad, idle), false, `应拒绝类型 ${String(bad)}`);
+  }
+});
+
+test('类型切换：typePanels 给出该侧全部外壳面板，未知类型返回空数组', () => {
+  assert.deepEqual(typePanels('video'),
+    ['source-panel', 'titles-panel', 'output-panel', 'action-panel']);
+  assert.deepEqual(typePanels('cd'),
+    ['cd-source-panel', 'tracks-panel', 'meta-panel', 'cd-output-panel', 'cd-action-panel']);
+  for (const bad of ['', 'bogus', null, undefined, 0, [], {}]) {
+    assert.deepEqual(typePanels(bad), [], `未知类型 ${String(bad)} 不显示任何面板`);
+  }
+  // 两组面板互不相交：否则切到一侧时会把另一侧的面板顺带显示/隐藏
+  const video = typePanels('video');
+  const cd = typePanels('cd');
+  assert.deepEqual(video.filter((id) => cd.includes(id)), [], '两侧面板 id 不得重复');
+  // 每个面板 id 都必须真实存在于合并页，否则控制器 toggle 时会抛错
+  for (const id of [...video, ...cd]) {
+    assert.ok(new RegExp(`id="${id}"`).test(discHtml), `disc.html 缺少面板 ${id}`);
+  }
+  // 两侧外壳面板在 HTML 里都是初始 hidden，等待用户先选类型
+  for (const id of [...video, ...cd]) {
+    assert.match(discHtml, new RegExp(`class="panel hidden" id="${id}"`),
+      `面板 ${id} 须初始隐藏`);
+  }
+});
+
 // ---------- 页面约定 ----------
-test('HTML：CSP 不含 media/img 放行，无内联脚本与内联样式，theme.js 先加载', () => {
+test('HTML：CSP 不含 media/img 放行，无内联脚本与内联样式，脚本顺序正确', () => {
   // http-equiv 与 content 分开写：分别取出 meta 标签再解析 content 属性
   const cspTag = /<meta[^>]*Content-Security-Policy[^>]*>/.exec(discHtml);
   assert.ok(cspTag, '必须声明 CSP');
@@ -458,66 +527,138 @@ test('HTML：CSP 不含 media/img 放行，无内联脚本与内联样式，them
   assert.ok(!discHtml.includes('style="'), '不得有内联 style 属性');
   assert.ok(!/on(click|load|error)=/.test(discHtml), '不得有内联事件属性');
 
+  // 合并页固定加载五个脚本，顺序不能变：i18n 供 theme 与两侧脚本取词，
+  // 两侧脚本先建好 window.__ffgui*Page 钩子，类型控制器最后接管面板显隐并惰性枚举光驱
+  const scriptSrcs = [...discHtml.matchAll(/<script src="([^"]+)"><\/script>/g)].map((m) => m[1]);
+  assert.deepEqual(scriptSrcs, [
+    'js/i18n.js', 'js/theme.js', 'js/disc.dvd.js', 'js/disc.cd.js', 'js/disc.type.js',
+  ], '脚本清单与顺序固定：i18n.js → theme.js → 视频侧 → CD 侧 → 类型控制器');
   const themeIdx = discHtml.indexOf('js/theme.js');
-  const pageIdx = discHtml.indexOf('js/disc.js');
-  assert.ok(themeIdx !== -1 && pageIdx !== -1 && themeIdx < pageIdx, 'theme.js 必须先于 disc.js 加载');
+  const dvdIdx = discHtml.indexOf('js/disc.dvd.js');
+  const cdIdx = discHtml.indexOf('js/disc.cd.js');
+  const typeIdx = discHtml.indexOf('js/disc.type.js');
+  assert.ok(themeIdx !== -1 && dvdIdx !== -1 && cdIdx !== -1 && typeIdx !== -1);
+  assert.ok(themeIdx < dvdIdx, 'theme.js 必须先于两侧页面脚本加载');
+  assert.ok(dvdIdx < cdIdx, '视频侧脚本先于 CD 侧脚本加载');
+  assert.ok(cdIdx < typeIdx, '类型控制器必须最后加载');
   assert.match(discHtml, /css\/disc\.css/, '须引用 disc.css');
+  assert.match(discHtml, /css\/cd\.css/, '须引用 cd.css');
   assert.match(discHtml, /css\/style\.css/, '须引用共用样式');
 });
 
-test('安全：页面与脚本均不使用 innerHTML，盘上字符串只走 textContent', () => {
+test('安全：三个页面脚本都不拼 HTML、不碰 Node 能力，window.ffgui 调用都在白名单内', () => {
   assert.ok(!discHtml.includes('innerHTML'), 'HTML 不得使用 innerHTML');
-  assert.ok(!discSrc.includes('innerHTML'), 'disc.js 不得使用 innerHTML');
-  assert.ok(!discSrc.includes('outerHTML'), 'disc.js 不得使用 outerHTML');
-  assert.ok(!discSrc.includes('insertAdjacentHTML'), 'disc.js 不得使用 insertAdjacentHTML');
-  assert.ok(!discSrc.includes('document.write'), 'disc.js 不得使用 document.write');
-  assert.ok(!discSrc.includes('eval('), 'disc.js 不得使用 eval');
-  assert.ok(!discSrc.includes('new Function'), 'disc.js 不得使用 new Function');
-  // 渲染层不得引用 Node/Electron 能力
-  for (const banned of ['require(', "require('electron')", 'process.', 'child_process', '__dirname']) {
-    assert.ok(!discSrc.includes(banned), `disc.js 不得引用 ${banned}`);
+  for (const [name, src] of PAGE_SCRIPTS) {
+    for (const banned of ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write',
+      'eval(', 'new Function']) {
+      assert.ok(!src.includes(banned), `${name} 不得使用 ${banned}`);
+    }
+    // 渲染层不得引用 Node/Electron 能力
+    for (const banned of ['require(', "require('electron')", 'process.', 'child_process', '__dirname']) {
+      assert.ok(!src.includes(banned), `${name} 不得引用 ${banned}`);
+    }
+    // 不得自行拼装 ffmpeg 参数（CSS 自定义属性 --progress-width 不算 ffmpeg 的 -progress）
+    for (const bad of ['-c:v', '-map ', 'pipe:', 'ffmpeg', 'libx264', '-nostats']) {
+      assert.ok(!src.includes(bad), `${name} 不得拼装 ffmpeg 参数：${bad}`);
+    }
+    // 不得自行拼装 ffmpeg 参数。-progress 只在作为独立参数出现时才算命中：
+    // CSS 自定义属性 `--progress-width` 与控件 id `cd-progress-bar` 不是 ffmpeg 参数
+    assert.ok(!/(^|[\s'"?])-progress\b/m.test(src), `${name} 不得拼装 ffmpeg 参数：-progress`);
   }
-  // 只用冻结的 window.ffgui 入口
-  const api = [...discSrc.matchAll(/window\.ffgui\.(\w+)/g)].map((m) => m[1]);
-  const allowed = new Set(['discPickSource', 'discPickKeydb', 'discListDrives', 'discProbe',
-    'discStart', 'discCancel', 'onDiscEvent', 'pickDirectory', 'getTheme', 'setTheme', 'onThemeChanged']);
-  for (const name of api) assert.ok(allowed.has(name), `不得调用未冻结的 API ${name}`);
-  // 不得自行拼装 ffmpeg 参数（CSS 自定义属性 --progress-width 不算 ffmpeg 的 -progress）
-  for (const bad of ['-c:v', '-map ', 'pipe:', 'ffmpeg', 'libx264', '-nostats']) {
-    assert.ok(!discSrc.includes(bad), `渲染层不得拼装 ffmpeg 参数：${bad}`);
+
+  // 只用冻结的 window.ffgui 入口：视频侧 + CD 侧 + 类型控制器合起来也不得越界
+  const apiCalls = PAGE_SCRIPTS.flatMap(([name, src]) => [...src.matchAll(/window\.ffgui\.(\w+)/g)]
+    .map((m) => ({ file: name, api: m[1] })));
+  assert.ok(apiCalls.length > 0, '至少应调用一个 window.ffgui 接口');
+  const allowed = new Set([
+    'discPickSource', 'discPickKeydb', 'discListDrives', 'discProbe',
+    'discStart', 'discCancel', 'onDiscEvent',
+    'cdListDrives', 'cdProbe', 'cdLookup', 'cdReleaseTracks', 'cdStart', 'cdCancel', 'onCdEvent',
+    'pickDirectory', 'getTheme', 'setTheme', 'onThemeChanged',
+  ]);
+  for (const call of apiCalls) {
+    assert.ok(allowed.has(call.api), `${call.file} 不得调用未冻结的 API ${call.api}`);
+    // 两侧接口不得串用：disc* 只在视频侧、cd* 只在 CD 侧（各自的单任务锁互不干扰）
+    if (call.api.startsWith('disc') || call.api === 'onDiscEvent') {
+      assert.equal(call.file, 'html/js/disc.dvd.js', `视频光盘接口不应出现在 ${call.file}`);
+    }
+    if (call.api.startsWith('cd') || call.api === 'onCdEvent') {
+      assert.equal(call.file, 'html/js/disc.cd.js', `CD 抓轨接口不应出现在 ${call.file}`);
+    }
   }
-  assert.ok(!/(^|[^-])-progress\b/m.test(discSrc), '渲染层不得拼装 ffmpeg 参数：-progress');
+
+  // 跨 IIFE 的钩子只有两个：各自 IIFE 赋值，类型控制器只读不改写
+  const assignments = (src) => [...src.matchAll(/window\.(__ffguiDiscPage|__ffguiCdPage)\s*=/g)]
+    .map((m) => m[1]);
+  assert.deepEqual(assignments(discSrc), ['__ffguiDiscPage'], '视频侧只暴露自己的钩子');
+  assert.deepEqual(assignments(cdSrc), ['__ffguiCdPage'], 'CD 侧只暴露自己的钩子');
+  assert.deepEqual(assignments(typeSrc), [], '类型控制器不得改写两侧钩子');
+  assert.ok(/window\.__ffguiDiscPage/.test(typeSrc) && /window\.__ffguiCdPage/.test(typeSrc),
+    '类型控制器须经钩子查询两侧状态');
+  // 控制器只依赖 isRunning / refreshDrives 两个成员，两侧钩子都得提供
+  for (const [name, src] of [['html/js/disc.dvd.js', discSrc], ['html/js/disc.cd.js', cdSrc]]) {
+    assert.match(src, /isRunning:/, `${name} 的钩子须提供 isRunning`);
+    assert.match(src, /refreshDrives:/, `${name} 的钩子须提供 refreshDrives`);
+  }
 });
 
-test('CSS：无内联样式，主题只用 CSS 变量', () => {
-  assert.ok(!discCss.includes('style="'), 'disc.css 不得含内联样式');
-  assert.ok(!/@import/.test(discCss), '不得引入远程资源');
-  // 颜色一律走 style.css 的主题变量
-  const colors = discCss.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
-  const allowed = new Set(['#000']);
-  for (const c of colors) assert.ok(allowed.has(c), `disc.css 不得写死颜色 ${c}`);
-  for (const v of ['var(--card-bg)', 'var(--border)', 'var(--text)', 'var(--text-secondary)']) {
-    assert.ok(discCss.includes(v), `disc.css 应使用主题变量 ${v}`);
+test('CSS：两侧样式表都不含内联样式，主题只用 CSS 变量', () => {
+  for (const [name, css] of [['disc.css', discCss], ['cd.css', cdCss]]) {
+    assert.ok(!css.includes('style="'), `${name} 不得含内联样式`);
+    assert.ok(!/@import/.test(css), `${name} 不得引入远程资源`);
+    // 颜色一律走 style.css 的主题变量
+    const colors = css.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
+    const allowed = new Set(['#000']);
+    for (const c of colors) assert.ok(allowed.has(c), `${name} 不得写死颜色 ${c}`);
+    for (const v of ['var(--card-bg)', 'var(--border)', 'var(--text)', 'var(--text-secondary)']) {
+      assert.ok(css.includes(v), `${name} 应使用主题变量 ${v}`);
+    }
   }
 });
 
-test('HTML：关键控件齐备（来源、标题操作、输出设置、进度）', () => {
+test('HTML：关键控件齐备（类型选择 + 视频侧 + CD 侧），id 无重复且脚本引用都落地', () => {
   for (const id of [
-    'btn-back', 'btn-pick-iso', 'btn-pick-folder', 'sel-drive', 'btn-refresh-drives',
+    // 页头与类型选择
+    'btn-back', 'type-panel', 'type-hint',
+    // 视频光盘侧
+    'btn-pick-iso', 'btn-pick-folder', 'drive-wrap', 'sel-drive', 'btn-refresh-drives',
     'drive-hint', 'source-name', 'btn-clear-source', 'btn-probe', 'input-keydb',
     'btn-pick-keydb', 'btn-clear-keydb', 'titles-panel', 'disc-meta', 'title-list',
     'btn-select-longest', 'btn-select-all-titles', 'btn-select-none-titles',
     'output-panel', 'sel-mode', 'sel-format', 'sel-quality', 'sel-audio-codec',
     'input-outdir', 'btn-pick-dir', 'action-panel', 'btn-start', 'btn-cancel',
-    'status-text', 'progress-bar', 'log-area',
+    'start-hint', 'status-text', 'progress-bar', 'log-area',
+    // 音乐 CD 侧（容器与列表沿用原名，其余一律 cd- 前缀）
+    'cd-source-panel', 'cd-drive-wrap', 'cd-sel-drive', 'cd-btn-refresh-drives',
+    'cd-drive-hint', 'cd-btn-probe', 'tracks-panel', 'track-list', 'btn-lookup',
+    'cd-meta', 'mb-result', 'meta-panel', 'input-album', 'input-album-artist',
+    'input-artist', 'input-date', 'input-genre', 'sel-compression',
+    'cd-output-panel', 'sel-paranoia', 'cd-input-outdir', 'cd-btn-pick-dir',
+    'cd-action-panel', 'cd-btn-start', 'cd-btn-cancel', 'cd-start-hint',
+    'cd-status-text', 'cd-progress-bar', 'cd-log-area',
   ]) {
     assert.ok(new RegExp(`id="${id}"`).test(discHtml), `缺少控件 ${id}`);
   }
+  // 类型卡片：两张 .type-option，靠 data-disc-type 区分（disc.type.js 按它 setType）
+  assert.equal((discHtml.match(/class="type-option"/g) || []).length, 2, '须有两张类型卡片');
+  assert.match(discHtml, /data-disc-type="video"/);
+  assert.match(discHtml, /data-disc-type="cd"/);
   // 输出方式与格式选项在 HTML 中给出，音频编码候选由脚本填充
   assert.match(discHtml, /id="sel-mode"[^>]*>\s*<option value="copy"/);
   assert.match(discHtml, /id="sel-format"/);
   // MP4 字幕限制必须在页面上有明确说明
   assert.match(discHtml, /PGS \/ VobSub 图像字幕/, '页面须说明 MP4 不支持图像字幕');
+
+  // 两侧共用一个文档，id 重复会让 $('id') 拿到另一侧的控件
+  const ids = [...discHtml.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(ids.filter((id, i) => ids.indexOf(id) !== i), [], 'disc.html 的 id 不得重复');
+  // 三个脚本用 $('id') / getElementById('id') 取到的控件必须真实存在
+  const htmlIds = new Set(ids);
+  for (const [name, src] of PAGE_SCRIPTS) {
+    const refs = [...src.matchAll(/\$\(\s*'([^']+)'\s*\)|getElementById\(\s*'([^']+)'\s*\)/g)]
+      .map((m) => m[1] || m[2]);
+    for (const id of refs) assert.ok(htmlIds.has(id), `${name} 引用了不存在的控件 ${id}`);
+  }
 });
 
 // 从源码中截取单个函数（与 scripts/regression.test.cjs 同思路）

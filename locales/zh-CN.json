@@ -15,7 +15,6 @@
   "home": {
     "title": "FFGui - 音视频工具箱",
     "heroTitle": "音视频工具箱",
-    "heroSubtitle": "选择下方功能开始处理你的音视频文件",
     "cardConvertTitle": "音视频转码",
     "cardConvertDesc": "在 MP4 / MKV / MP3 等格式之间互相转换",
     "cardMergeTitle": "音视频合并",

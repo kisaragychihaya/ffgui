@@ -15,7 +15,6 @@
   "home": {
     "title": "FFGui - メディアツールボックス",
     "heroTitle": "メディアツールボックス",
-    "heroSubtitle": "下の機能を選んで、音声・動画ファイルの処理を始めてください",
     "cardConvertTitle": "音声・動画の変換",
     "cardConvertDesc": "MP4 / MKV / MP3 などの形式に相互変換します",
     "cardMergeTitle": "音声・動画の結合",

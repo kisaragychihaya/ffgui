@@ -62,19 +62,13 @@ body {
 
 .hero {
   text-align: center;
-  margin-bottom: 48px;
+  margin-bottom: 24px;
 }
 
 .hero h1 {
   font-size: 32px;
   font-weight: 600;
   letter-spacing: 2px;
-}
-
-.subtitle {
-  margin-top: 12px;
-  color: var(--text-secondary);
-  font-size: 15px;
 }
 
 .card-grid {
@@ -130,6 +124,7 @@ body {
 .icon-crop    { background: linear-gradient(135deg, #0984e3, #74b9ff); }
 .icon-record  { background: linear-gradient(135deg, #e84393, #fd79a8); }
 .icon-disc    { background: linear-gradient(135deg, #6c5ce7, #a29bfe); }
+.icon-dub     { background: linear-gradient(135deg, #d35400, #f39c12); }
 
 .card-title {
   font-size: 18px;

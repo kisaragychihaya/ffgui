@@ -15,7 +15,6 @@
   "home": {
     "title": "FFGui - Media Toolbox",
     "heroTitle": "Media Toolbox",
-    "heroSubtitle": "Pick a tool below to start processing your media files",
     "cardConvertTitle": "Convert Audio/Video",
     "cardConvertDesc": "Convert between MP4 / MKV / MP3 and other formats",
     "cardMergeTitle": "Merge Audio/Video",

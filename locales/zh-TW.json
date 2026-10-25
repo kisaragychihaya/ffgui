@@ -705,6 +705,7 @@
       "errDownloadTimeout": "下載模型逾時",
       "errDownloadAborted": "下載已取消",
       "errDownloadSave": "儲存 {{file}} 失敗：{{reason}}",
+      "errDownloadAria2": "aria2c 下載失敗（{{detail}}），已下載的部分會保留，下次可續傳",
       "errNoUserData": "無法確定應用程式資料夾，配音任務無法執行",
       "trackTitle": "字幕配音"
     }

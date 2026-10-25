@@ -96,6 +96,27 @@ jobs:
           # PowerShell 执行相对路径程序必须带 .\
           .\bin\ffmpeg.exe -version | Select-Object -First 1
 
+      - name: 下载 aria2c 并放入 bin/aria2
+        shell: pwsh
+        run: |
+          # aria2 官方 Release 只有 Windows 64 位构建（无 Windows arm64 / macOS 版），
+          # 因此只在本 job 内置 aria2c.exe；arm64 与 macOS 运行时靠 PATH 探测，
+          # 都没有时 main/dub.js 回退内置 https 下载（模型下载仍可用，只是不能断点续传）
+          $url = 'https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip'
+          # 解压到 $RUNNER_TEMP，避免往仓库根目录留大目录（forge.config.js 的 ignore 虽已
+          # 排除 bin/，仍从源头避免残留）
+          $tmp = Join-Path $env:RUNNER_TEMP 'aria2-extract'
+          Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $tmp | Out-Null
+          curl.exe -L --fail -o "$tmp\aria2.zip" $url
+          if ($LASTEXITCODE -ne 0) { throw '下载 aria2 release 压缩包失败' }
+          7z x "$tmp\aria2.zip" -o"$tmp" | Out-Null
+          $exe = Get-ChildItem -Recurse -Filter aria2c.exe -Path $tmp | Select-Object -First 1
+          if (-not $exe) { throw '压缩包中未找到 aria2c.exe' }
+          New-Item -ItemType Directory -Force bin/aria2 | Out-Null
+          Copy-Item $exe.FullName bin/aria2/aria2c.exe
+          .\bin\aria2\aria2c.exe --version | Select-Object -First 1
+
       - name: 安装依赖
         run: npm ci
 
@@ -255,6 +276,9 @@ jobs:
           # 同 x64：构建失败不阻断打包，显式归零 $LASTEXITCODE（真正的错误已记录为警告）
           exit 0
 
+      # 不内置 aria2c：aria2 官方 Release 只有 Windows 64 位（x64）构建，没有 arm64 版。
+      # 运行时 main/dub.js 的 detectAria2 依次尝试 FFGUI_ARIA2 → 内置（无）→ PATH 探测
+      # （用户自行安装的 aria2c）→ 回退内置 https 下载，功能可用但无断点续传。
       - name: 下载 ARM64 版 ffmpeg 并放入 bin/
         shell: pwsh
         run: |

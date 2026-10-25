@@ -705,6 +705,7 @@
       "errDownloadTimeout": "Timed out downloading the model",
       "errDownloadAborted": "Download cancelled",
       "errDownloadSave": "Failed to save {{file}}: {{reason}}",
+      "errDownloadAria2": "aria2c download failed ({{detail}}). The downloaded part is kept and will be resumed next time",
       "errNoUserData": "Cannot determine the application data folder, so dubbing cannot run",
       "trackTitle": "Subtitle dubbing"
     }

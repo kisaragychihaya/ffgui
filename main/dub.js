@@ -51,6 +51,10 @@ const MODEL_BASE_HOSTS = {
 const MODEL_REPO = 'Serveurperso/Qwen3-TTS-GGUF';
 const USER_AGENT = 'FFGui/1.0 (https://github.com/kisaragychihaya/ffgui)';
 
+// aria2c（模型下载优先用它，支持断点续传）：探测超时、取消时的宽限期
+const ARIA2_PROBE_TIMEOUT_MS = 5000;
+const ARIA2_KILL_GRACE_MS = 3000;
+
 // 模型文件名：v1 固定 talker 1.7b base 模式 + 与 variant 匹配的 tokenizer
 function talkerFileName(variant) {
   return `qwen-talker-1.7b-base-${variant}.gguf`;
@@ -64,6 +68,36 @@ function tokenizerFileName(variant) {
 function modelDownloadUrl(file, mirror = 'official') {
   const host = MODEL_BASE_HOSTS[mirror === 'mirror' ? 'mirror' : 'official'];
   return `${host}/${MODEL_REPO}/resolve/main/${file}`;
+}
+
+// ---------- 纯函数：aria2c 进度 ----------
+
+// aria2 的 readout 形如 [#1 SIZE:12MiB/100MiB(12%) CN:4 DL:5.2MiB ETA:17s]，
+// 按 \r 原地刷新。优先取尺寸对，拿不到时退回读百分比（用上一次已知总大小换算）。
+const ARIA2_UNITS = { B: 1, KiB: 1024, MiB: 1024 ** 2, GiB: 1024 ** 3, TiB: 1024 ** 4 };
+const ARIA2_SIZE_RE = /([\d.]+)\s*([KMGT]?i?B)\s*\/\s*([\d.]+)\s*([KMGT]?i?B)\s*\(\s*(\d{1,3})%\s*\)/;
+const ARIA2_PERCENT_RE = /\(\s*(\d{1,3})%\s*\)/;
+
+function parseAria2Readout(line, lastTotalBytes = 0) {
+  const text = String(line || '');
+  const m = ARIA2_SIZE_RE.exec(text);
+  if (m) {
+    const receivedBytes = Math.round(Number(m[1]) * (ARIA2_UNITS[m[2]] || 1)) || 0;
+    const totalBytes = Math.round(Number(m[3]) * (ARIA2_UNITS[m[4]] || 1)) || 0;
+    return {
+      receivedBytes: totalBytes > 0 ? Math.min(receivedBytes, totalBytes) : receivedBytes,
+      totalBytes,
+    };
+  }
+  const p = ARIA2_PERCENT_RE.exec(text);
+  if (!p) return null;
+  // 只有百分比且不知道总大小时给不出绝对字节，交给调用方沿用上次的进度
+  if (!(lastTotalBytes > 0)) return { receivedBytes: 0, totalBytes: 0 };
+  const percent = Number(p[1]);
+  return {
+    receivedBytes: Math.min(lastTotalBytes, Math.round((lastTotalBytes * percent) / 100)),
+    totalBytes: lastTotalBytes,
+  };
 }
 
 // 引擎能识别的语言（大写开头的名字来自上游 config.json，见文件头注释）。
@@ -204,6 +238,38 @@ function enginePresent(enginePath) {
   } catch {
     return false;
   }
+}
+
+// ---------- 纯函数：aria2c 路径 ----------
+
+// 随包内置的 aria2c：只有 Windows x64 有（aria2 官方只发布 win-64bit 构建，没有
+// macOS / Windows arm64 版本），这些平台返回 null，运行时走 PATH 探测再回退 https。
+// - 开发：<app>/bin/aria2/aria2c.exe
+// - 打包：resources/aria2/aria2c.exe（forge 的 extraResource 把 bin/aria2/ 映射到这里）
+// 随包分发即可信，命中后不再跑 --version 自检；文件不存在才返回 null。
+function getBundledAria2Path(options = {}) {
+  const fsImpl = options.fs || fs;
+  const platform = options.platform || process.platform;
+  if (platform !== 'win32') return null;
+  const app = options.app;
+  const resourcesPath = typeof options.resourcesPath === 'string' && options.resourcesPath
+    ? options.resourcesPath
+    : (process.resourcesPath || '');
+  const candidates = [];
+  if (app && app.isPackaged && resourcesPath) {
+    candidates.push(path.join(resourcesPath, 'aria2', 'aria2c.exe'));
+  }
+  if (app && typeof app.getAppPath === 'function') {
+    candidates.push(path.join(app.getAppPath(), 'bin', 'aria2', 'aria2c.exe'));
+  }
+  for (const candidate of candidates) {
+    try {
+      if (fsImpl.existsSync(candidate)) return candidate;
+    } catch {
+      // 权限等原因无法探测，继续下一个候选
+    }
+  }
+  return null;
 }
 
 // ---------- 纯函数：字幕解析 ----------
@@ -632,6 +698,9 @@ function createDubService(options = {}) {
   const httpImpl = options.http || require('http');
   const httpsImpl = options.https || require('https');
   const app = options.app;
+  const resourcesPath = typeof options.resourcesPath === 'string' && options.resourcesPath
+    ? options.resourcesPath
+    : (process.resourcesPath || '');
   const userDataDir = typeof options.userDataDir === 'string' && options.userDataDir
     ? options.userDataDir
     : (app && typeof app.getPath === 'function' ? app.getPath('userData') : '');
@@ -651,6 +720,8 @@ function createDubService(options = {}) {
   };
   let activeJob = null;
   let downloadState = null;
+  // aria2c 探测结果的缓存（null 表示还没探测过）
+  let aria2Pending = null;
 
   function emitTo(sender, event) {
     if (!sender) return;
@@ -1142,6 +1213,246 @@ function createDubService(options = {}) {
 
   // ---------- 模型下载 ----------
 
+  // aria2c 探测：优先 aria2c（支持断点续传），没有时回退内置 https 实现。
+  // 优先级见 detectAria2：注入 > FFGUI_ARIA2 > 随包内置（仅 Windows x64）> PATH 探测。
+  // options.aria2 可注入：可执行文件路径字符串 / true（裸名 aria2c）/ false（强制
+  // 不可用）/ Promise<前述任一> / { path }。未注入时先看环境变量 FFGUI_ARIA2
+  // （仿 FFGUI_TTS_SERVER，便于自定义安装），再看 bin/aria2 的内置二进制（打包后
+  // 在 resources/aria2），最后探测 PATH 上的 aria2c。
+  // 探测结果在服务生命周期内只算一次；测试默认注入 false，不会真去跑 spawn。
+  function resolveAria2() {
+    if (!aria2Pending) aria2Pending = detectAria2();
+    return aria2Pending;
+  }
+
+  async function detectAria2() {
+    // 1) 注入（测试 / 宿主定制）：可执行文件路径、true、false 或 Promise
+    let injected = options.aria2;
+    // 跨 realm 的 Promise 用鸭子类型判断（vm 沙箱内外 Promise 构造函数不同）
+    if (injected && typeof injected.then === 'function') injected = await injected;
+    if (injected !== undefined) return aria2FromValue(injected);
+
+    // 2) 环境变量 FFGUI_ARIA2（调试 / 自定义安装）：给了完整路径也要探测，
+    //    过期路径不能当成可用，探测不过就继续往下找
+    const override = env.FFGUI_ARIA2;
+    if (override) {
+      if (await probeAria2(override)) return { path: override };
+      console.log(`[ffgui] FFGUI_ARIA2 指向的 aria2c 不可用（${override}），继续尝试内置与 PATH`);
+    }
+
+    // 3) 随包内置（只有 Windows x64 携带）：存在即信任，不跑 --version 自检
+    const bundled = getBundledAria2Path({ fs: fsImpl, platform, app, resourcesPath });
+    if (bundled) {
+      console.log(`[ffgui] 使用内置 aria2c：${bundled}`);
+      return { path: bundled };
+    }
+
+    // 4) PATH 探测（macOS / Windows arm64 没有内置二进制，靠这条）
+    if (await probeAria2('aria2c')) return { path: 'aria2c' };
+    console.log('[ffgui] 未找到可用的 aria2c（内置与 PATH 均无），模型下载回退内置 https 实现');
+    return null;
+  }
+
+  function aria2FromValue(value) {
+    if (typeof value === 'string') return value ? { path: value } : null;
+    if (value === true) return { path: 'aria2c' };
+    if (value && typeof value === 'object' && typeof value.path === 'string' && value.path) {
+      return { path: value.path };
+    }
+    return null;
+  }
+
+  // 探针：aria2c --version 退出码 0 且输出含 aria2 才认为可用（裸名由 spawn 走 PATH）
+  function probeAria2(bin) {
+    return new Promise((resolve) => {
+      let child = null;
+      let timer = null;
+      let done = false;
+      const finish = (ok) => {
+        if (done) return;
+        done = true;
+        if (timer) clearTimeout(timer);
+        resolve(ok);
+      };
+      try {
+        child = spawnImpl(bin, ['--version'], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          windowsHide: true,
+        });
+      } catch {
+        finish(false);
+        return;
+      }
+      let header = '';
+      if (child.stdout && typeof child.stdout.on === 'function') {
+        child.stdout.on('data', (chunk) => {
+          if (header.length < 4096) header += String(chunk);
+        });
+      }
+      // stderr 也要读空，否则管道写满会把探针挂住
+      if (child.stderr && typeof child.stderr.on === 'function') child.stderr.on('data', () => {});
+      child.on('error', () => finish(false));
+      child.on('close', (code) => finish(code === 0 && /aria2/i.test(header)));
+      timer = setTimeout(() => {
+        timer = null;
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // 已退出
+        }
+        finish(false);
+      }, ARIA2_PROBE_TIMEOUT_MS);
+    });
+  }
+
+  // 用 aria2c 下载单个文件到 target（调用方传的是 .partial 路径），返回已下载字节数。
+  // -c 断点续传：同目录下 aria2 的 `<target>.aria2` 控制文件配合已有的 .partial，
+  // 下次下载同一文件自动接着下；因此取消与失败都**不删**这两者（只由调用方在
+  // https 回退路径上清理），中途也不切换实现（一次下载内一个文件只用一个下载器）。
+  function downloadFileAria2({ bin, url, target, onChunk, signal }) {
+    // 空的控制文件（下载不到 1 秒就被取消）会让下一次 -c 直接 exit 1 且不打印原因；
+    // 删掉后 aria2 会按 .partial 已有长度发 Range 续传（真实 aria2 1.37 实测）
+    const control = target + '.aria2';
+    try {
+      if (fsImpl.statSync(control).size === 0) fsImpl.unlinkSync(control);
+    } catch {
+      // 没有控制文件（首次下载）或没有权限，交给 aria2 自己判断
+    }
+    const args = [
+      '-c',
+      '-d', path.dirname(target),
+      '-o', path.basename(target),
+      '--file-allocation=none',
+      // 模型动辄几 GB：无限重试 + 固定重试间隔，断网恢复后靠 -c 续上
+      '--max-tries=0',
+      '--retry-wait=5',
+      '--timeout=60',
+      '--connect-timeout=30',
+      '--check-certificate=true',
+      // 目标已存在时不能改名成 foo.1，也不能拒绝覆盖：靠 -c 续传
+      '--auto-file-renaming=false',
+      '--allow-overwrite=false',
+      // 控制文件默认 60 秒才落盘，取消时来不及保存就等于丢掉进度
+      '--auto-save-interval=1',
+      '--console-log-level=notice',
+      '--summary-interval=1',
+      '--show-console-readout=true',
+      '-U', USER_AGENT,
+      url,
+    ];
+    return new Promise((resolve, reject) => {
+      let child = null;
+      let settled = false;
+      let cancelled = false;
+      let killTimer = null;
+      let lastTotal = 0;
+      let pending = '';
+      let stderrTail = '';
+
+      const finish = (err, value) => {
+        if (settled) return;
+        settled = true;
+        if (killTimer) {
+          clearTimeout(killTimer);
+          killTimer = null;
+        }
+        if (err) reject(err);
+        else resolve(value);
+      };
+
+      const fail = (detail, params) => finish(dubError('FFGUI_DUB_DOWNLOAD',
+        t('main.dub.errDownloadAria2', { detail }), params));
+
+      // 取消：先 SIGTERM 让 aria2 收尾并写好控制文件，宽限期后再强杀
+      const stopChild = () => {
+        if (settled || cancelled) return;
+        cancelled = true;
+        try {
+          child.kill('SIGTERM');
+        } catch {
+          // 已退出
+        }
+        killTimer = setTimeout(() => {
+          killTimer = null;
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            // 已退出
+          }
+        }, ARIA2_KILL_GRACE_MS);
+      };
+
+      const handleLine = (line) => {
+        if (!line || line.indexOf('%') < 0) return;
+        const parsed = parseAria2Readout(line, lastTotal);
+        if (!parsed) return;
+        if (parsed.totalBytes > 0) lastTotal = parsed.totalBytes;
+        if (typeof onChunk === 'function') onChunk(parsed.receivedBytes, parsed.totalBytes);
+      };
+
+      // readout 用 \r 原地刷新，也可能出现在 stderr（重定向时），两个流都喂进来
+      const feed = (chunk) => {
+        pending += String(chunk);
+        const parts = pending.split(/[\r\n]/);
+        pending = parts.pop() || '';
+        if (pending.length > 8192) pending = pending.slice(-8192);
+        for (const line of parts) handleLine(line);
+      };
+
+      try {
+        child = spawnImpl(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      } catch (err) {
+        fail(err && err.message ? err.message : String(err), { bin });
+        return;
+      }
+      if (child.stdout && typeof child.stdout.on === 'function') child.stdout.on('data', feed);
+      if (child.stderr && typeof child.stderr.on === 'function') {
+        child.stderr.on('data', (chunk) => {
+          stderrTail = (stderrTail + String(chunk)).slice(-400);
+          feed(chunk);
+        });
+      }
+      child.on('error', (err) => {
+        fail(err && err.message ? err.message : String(err), { bin });
+      });
+      child.on('close', (code) => {
+        if (settled) return;
+        if (cancelled) {
+          finish(dubError('FFGUI_DUB_DOWNLOAD', t('main.dub.errDownloadAborted')));
+          return;
+        }
+        if (code !== 0) {
+          const tail = stderrTail.trim().split(/[\r\n]+/).filter(Boolean).pop() || '';
+          fail(`exit=${code === null ? '?' : code}${tail ? `: ${tail}` : ''}`, { exitCode: code, bin });
+          return;
+        }
+        // 退出码 0：以落盘大小为准（readout 只有百分比时也能给出准确字节数）
+        let bytes = 0;
+        try {
+          bytes = fsImpl.statSync(target).size;
+        } catch (err) {
+          fail(err && err.message ? err.message : String(err), { bin, path: target });
+          return;
+        }
+        if (!(bytes > 0)) {
+          fail('exit=0, 0 bytes', { bin, path: target });
+          return;
+        }
+        finish(null, { bytes, totalBytes: lastTotal || bytes });
+      });
+      if (signal && typeof signal.addEventListener === 'function') {
+        if (signal.aborted) stopChild();
+        else signal.addEventListener('abort', stopChild, { once: true });
+      }
+    });
+  }
+
+  // https 回退路径的失败清理：删掉半成品（aria2 路径保留，供下次 -c 续传）
+  function discardPartial(partial, useAria2) {
+    safeUnlink(partial);
+    if (useAria2) safeUnlink(partial + '.aria2');
+  }
+
   // 下载单个文件。失败/中断时先关掉写流再 reject —— Windows 上句柄未关会被
   // 占用，.partial 就删不掉，下次启动会被误当成半截模型。
   function downloadFile({ url, target, onChunk, signal, redirects = 0 }) {
@@ -1268,8 +1579,11 @@ function createDubService(options = {}) {
       abort,
       sender,
     };
+    // 本次下载使用的 aria2c（null 表示回退内置 https 实现）；一次下载内不切换
+    let aria2 = null;
     try {
       fsImpl.mkdirSync(modelsDir, { recursive: true });
+      aria2 = await resolveAria2();
       for (const file of files) {
         if (downloadState.cancelRequested) break;
         const target = path.join(modelsDir, file);
@@ -1282,37 +1596,38 @@ function createDubService(options = {}) {
         emitTo(sender, { type: 'download-start', file, variant: variantName, mirror: mirrorMode, url });
         let lastEmit = 0;
         let lastPercent = -1;
-        const result = await downloadFile({
-          url,
-          target: partial,
-          signal: abort.signal,
-          onChunk: (receivedBytes, totalBytes) => {
-            if (downloadState) {
-              downloadState.receivedBytes = receivedBytes;
-              downloadState.totalBytes = totalBytes;
-            }
-            const percent = totalBytes > 0 ? Math.floor((receivedBytes / totalBytes) * 100) : 0;
-            const now = Date.now();
-            // 限流：百分比变化或每 400ms 一次，避免事件洪水
-            if (percent === lastPercent && now - lastEmit < 400) return;
-            lastPercent = percent;
-            lastEmit = now;
-            emitTo(sender, {
-              type: 'download-progress',
-              file,
-              receivedBytes,
-              totalBytes,
-            });
-          },
-        });
+        const onChunk = (receivedBytes, totalBytes) => {
+          if (downloadState) {
+            downloadState.receivedBytes = receivedBytes;
+            downloadState.totalBytes = totalBytes;
+          }
+          const percent = totalBytes > 0 ? Math.floor((receivedBytes / totalBytes) * 100) : 0;
+          const now = Date.now();
+          // 限流：百分比变化或每 400ms 一次，避免事件洪水
+          if (percent === lastPercent && now - lastEmit < 400) return;
+          lastPercent = percent;
+          lastEmit = now;
+          emitTo(sender, {
+            type: 'download-progress',
+            file,
+            receivedBytes,
+            totalBytes,
+          });
+        };
+        const result = aria2
+          ? await downloadFileAria2({
+            bin: aria2.path, url, target: partial, signal: abort.signal, onChunk,
+          })
+          : await downloadFile({ url, target: partial, signal: abort.signal, onChunk });
         if (downloadState.cancelRequested) {
-          safeUnlink(partial);
+          // aria2 路径保留 .partial 与 .aria2 控制文件，下次同一文件续传
+          if (!aria2) safeUnlink(partial);
           break;
         }
         try {
           fsImpl.renameSync(partial, target);
         } catch (err) {
-          safeUnlink(partial);
+          discardPartial(partial, Boolean(aria2));
           throw dubError('FFGUI_DUB_DOWNLOAD', t('main.dub.errDownloadSave', {
             file,
             reason: err && err.message ? err.message : String(err),
@@ -1326,8 +1641,11 @@ function createDubService(options = {}) {
       return { cancelled: false, files, variant: variantName };
     } catch (err) {
       const file = downloadState ? downloadState.file : files[0];
-      // 中断/失败都删掉 .partial，避免留下半截模型被误认为已下载
-      if (downloadState && downloadState.partial) safeUnlink(downloadState.partial);
+      // https 回退路径：中断/失败都删掉 .partial，避免留下半截模型被误认为已下载。
+      // aria2 路径相反：.partial 与控制文件是断点续传的依据，必须留着。
+      if (downloadState && downloadState.partial && !aria2) {
+        safeUnlink(downloadState.partial);
+      }
       if (downloadState && downloadState.cancelRequested) {
         return { cancelled: true, files: [] };
       }
@@ -1663,7 +1981,9 @@ module.exports = {
   validateDubJob,
   countStreams,
   getTtsServerPath,
+  getBundledAria2Path,
   modelDownloadUrl,
+  parseAria2Readout,
   talkerFileName,
   tokenizerFileName,
   languageToBcp47,

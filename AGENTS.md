@@ -17,7 +17,7 @@ FFGui 是基于 Electron 的桌面音视频工具箱（GUI for FFmpeg），LGPL-
 - `preload/preload.js` — contextBridge，渲染层唯一能力入口 `window.ffgui`，新增 IPC 只暴露最小 API
 - `html/` — 渲染层页面与脚本；`locales/` — 五语言词典；每个页面最先加载 `html/js/i18n.js` 再 `theme.js`
 - `native/` — Rust 光盘侧车（ffgui-disc）与 TTS 引擎源码子模块（qwentts.cpp，需 --recurse-submodules）
-- `bin/` — 内置 ffmpeg / 侧车 / TTS 二进制（打包经 extraResource 分发且不进 asar）；`assets/` 图标 + NSIS 脚本；`scripts/`、`makers/`、`tools/`、`forge.config.js` — 构建与打包
+- `bin/` — 内置 ffmpeg / 侧车 / TTS / aria2c 二进制（打包经 extraResource 分发且不进 asar；`bin/aria2/aria2c.exe` 仅 Windows x64，供模型下载断点续传，来源与布局见 `bin/README.md`）；`assets/` 图标 + NSIS 脚本；`scripts/`、`makers/`、`tools/`、`forge.config.js` — 构建与打包
 
 逐文件职责、IPC 清单、协议与实现细节见 **docs/architecture.md**。
 

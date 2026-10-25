@@ -7,8 +7,9 @@
 `npm test` 跑 `scripts/regression.test.cjs` + `scripts/i18n.test.cjs` + `scripts/cdrip.test.cjs`
 + `scripts/cd-ui.test.cjs`，生成独立临时媒体并自动清理；字幕配音（dub）的专项测试按同一命名
 约定是 `scripts/dub.test.cjs`（主进程：引擎路径解析、ffmpeg 命令组装、字幕条目解析与时间轴
-换算）与 `scripts/dub-ui.test.cjs`（页面纯逻辑，注入真实 `locales/zh-CN.json`），新增后要一并
-加进 `package.json` 的 `npm test`；
+换算、模型下载的 https/aria2 两条路径与内置 aria2c 路径解析——aria2 用注入的假 spawn，
+默认注入 `aria2: false` 避免真探测 PATH）与 `scripts/dub-ui.test.cjs`（页面纯逻辑，注入真实
+`locales/zh-CN.json`），新增后要一并加进 `package.json` 的 `npm test`；
 侧车/页面专项用
 `node --test scripts/disc.test.cjs scripts/disc-sidecar.test.cjs scripts/disc-ui.test.cjs`，
 Rust 侧车 `cd native/ffgui-disc && cargo test --locked`。`disc-ui.test.cjs` 用 vm 抽取
@@ -25,8 +26,10 @@ Rust 侧车 `cd native/ffgui-disc && cargo test --locked`。`disc-ui.test.cjs` �
 统一光盘页（disc.html）验证类型切换、ISO/目录/光驱的探测、选轨、抓取与取消（视频盘需真实
 光盘环境）；选「音乐 CD」后验证光驱枚举、读 TOC、MusicBrainz 查询与填充、逐轨抓 FLAC 与
 取消（需真实音乐 CD）；
-字幕配音页验证引擎启动（无引擎时报错是否可读）、模型下载与镜像切换、逐条合成试听、混流输出
-与取消清理（需 `bin/tts/` 中有 tts-server 或设置 `FFGUI_TTS_SERVER`）。
+字幕配音页验证引擎启动（无引擎时报错是否可读）、模型下载与镜像切换（Windows 用随包内置的
+`resources/aria2/aria2c.exe`：下载中途取消、重进页面再点下载应续传而不是从 0 开始；
+`FFGUI_ARIA2` 指向不存在的路径 + PATH 里也没有 aria2c 时，应自动回退内置 https 下载）、
+逐条合成试听、混流输出与取消清理（需 `bin/tts/` 中有 tts-server 或设置 `FFGUI_TTS_SERVER`）。
 
 ## 已知问题
 
@@ -72,6 +75,10 @@ Rust 侧车 `cd native/ffgui-disc && cargo test --locked`。`disc-ui.test.cjs` �
   未做）；运行期还要求机器有可用的 Vulkan 驱动，否则 Vulkan 版起不来。ggml 默认按**动态库**
   构建，`bin/tts/` 里必须同时有 `ggml*.dll`（缺了 tts-server 直接起不来）。模型是 talker +
   tokenizer 两个 GGUF，不随包分发，首次使用下载到 `userData/tts-models/`（官方地址与
-  hf-mirror 镜像可切，下载失败要能重试且不产生半截文件）；引擎缺失或启动失败必须明确报错，
+  hf-mirror 镜像可切）。下载优先用 aria2c（Windows x64 随包内置 `resources/aria2/aria2c.exe`，
+  其他平台探 PATH；`FFGUI_ARIA2` 可指定可执行文件）。aria2 走 `-c` 断点续传：取消/失败保留
+  `.ffgui-partial` 与 `.aria2` 控制文件供下次续传，模型文件只在 aria2 退出码 0 后才 rename
+  出现，不会被误认成已下载；四级探测都没命中才回退内置 https 实现，该路径失败即删半成品；
+  一次下载内不切换实现。引擎缺失或启动失败必须明确报错，
   不能静默产出无人声音轨。引擎路径可用 `FFGUI_TTS_SERVER` 覆盖。体积：Vulkan 版约 41MB
   （其中 `ggml-vulkan.dll` 38MB，含编译好的 shader），CPU 版约 2.5MB，安装包随之增大

@@ -5,6 +5,8 @@ out/
 /bin/disc/
 # TTS 引擎（tts-server）构建产物：由 native/qwentts.cpp 子模块编译，见 bin/README.md
 /bin/tts/
+# 内置 aria2c（仅 Windows x64，模型下载断点续传用）：CI 从 aria2 官方 Release 下载，见 bin/README.md
+/bin/aria2/
 
 # 内置 ffmpeg 二进制（体积过大不进仓库，请按 bin/README.md 自行下载放置）
 /bin/ffmpeg.exe

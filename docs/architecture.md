@@ -48,8 +48,14 @@ main/dub.js         字幕配音（dub）：spawn 本地 TTS 引擎 tts-server�
                     起 127.0.0.1 上的 OpenAI 兼容 HTTP 服务并按字幕条目逐条合成语音，再由
                     ffmpeg 按字幕原始时间轴拼装音频、与源视频混流输出。模型 GGUF 不随包
                     分发：首次使用下载到 userData/tts-models/（官方地址与 hf-mirror 镜像可
-                    切）；引擎缺失或启动失败要给可读提示，不能静默产出无人声的结果；取消需
-                    kill 引擎子进程并清理临时音频与半成品
+                    切）。下载器 resolveAria2 按四级优先：options.aria2 注入 → 环境变量
+                    FFGUI_ARIA2（会跑 --version 自检）→ 内置 bin/aria2/aria2c.exe（打包后
+                    resources/aria2/，仅 Windows x64，命中即信任不探测）→ PATH 上的 aria2c；
+                    全都没有才回退内置 https 实现（该路径失败即删半成品）。aria2 路径用
+                    -c 断点续传，取消/失败保留 .ffgui-partial 与 .aria2 控制文件；
+                    一次下载内不切换实现；引擎缺失或
+                    启动失败要给可读提示，不能静默产出无人声的结果；取消需 kill 引擎子进程并
+                    清理临时音频与半成品
 main/theme.js       主题持久化（system/light/dark）到 userData/config.json 的 theme 字段，经
                     nativeTheme.themeSource 强制全局生效；IPC ffgui:theme-get / ffgui:theme-set
                     （校验合法性 → 持久化 → 改 themeSource → 广播 ffgui:theme-changed）

@@ -12,6 +12,9 @@
 - `node scripts/build-tts.cjs [--backend vulkan|cpu] [--arch x64|arm64] [--no-native] [--clean]` — 编译
   TTS 引擎到 `bin/tts/`（可选：不编则打包时跳过 bin/tts/，字幕配音回退 PATH；需先
   `git submodule update --init --recursive` 与 cmake，Vulkan 后端另需 Vulkan SDK）
+- `bin/aria2/aria2c.exe`（模型下载断点续传，仅 Windows x64）没有构建脚本，本地开发需要时
+  按 `bin/README.md` 从 aria2 官方 Release 下载放入；缺失不影响打包（forge 只在该目录存在时
+  才把它作为 extraResource，运行时回退 PATH 探测与内置 https 下载）
 
 `npm test` 用 Node 内置测试运行器（`scripts/regression.test.cjs`），需 PATH 中有 ffmpeg/ffprobe
 或设置 `FFMPEG` / `FFPROBE`。没有 lint/format 配置。
@@ -21,7 +24,10 @@
 `.github/workflows/build.yml`（workflow_dispatch 手动触发或发布 Release 时触发）：
 
 - Windows x64：从 GyanD/codexffmpeg 最新 release 下载 full_build.7z（gyan.dev 直链在 CI 上会被
-  反爬拦截），取 `ffmpeg.exe` 放入 `bin/`；dtolnay/rust-toolchain 构建 Rust 侧车并复制为
+  反爬拦截），取 `ffmpeg.exe` 放入 `bin/`；从 aria2 官方 Release 下载
+  `release-1.37.0/aria2-1.37.0-win-64bit-build1.zip`（解压到 `$RUNNER_TEMP`），取 `aria2c.exe`
+  放入 `bin/aria2/`（模型下载断点续传用；aria2 官方只有 x64 构建，arm64/macOS 不内置）；
+  dtolnay/rust-toolchain 构建 Rust 侧车并复制为
   `bin/disc/ffgui-disc.exe`；humbletim/install-vulkan-sdk 装 Vulkan SDK 后
   `node scripts/build-tts.cjs --backend vulkan --no-native` 构建 TTS 引擎到 `bin/tts/`
   （Vulkan 失败自动回退 `--backend cpu`，两者都失败只写警告并建空 `bin/tts/`，打包继续）；
@@ -48,5 +54,5 @@
   已在本机实测（产物为 `build/Release/tts-server.exe` + 同目录 `ggml*.dll`，tts-server 需与
   dll 同目录才能启动）；**仍未验证**的是 Windows arm64 的 `-A ARM64` 交叉、macOS 构建，以及
   CI 里 Vulkan SDK action 的版本/输入名与 glslc 可用性
-- 仓库不提交 `bin/ffmpeg.exe` 等大文件，CI 每次现下；NSISBI 编译器同样不入库，构建时从 v0.1
-  Release 资源下载解压
+- 仓库不提交 `bin/ffmpeg.exe`、`bin/aria2/` 等二进制，CI 每次现下；NSISBI 编译器同样不入库，
+  构建时从 v0.1 Release 资源下载解压

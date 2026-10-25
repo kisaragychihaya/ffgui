@@ -705,6 +705,7 @@
       "errDownloadTimeout": "모델 다운로드 시간이 초과되었습니다",
       "errDownloadAborted": "다운로드가 취소되었습니다",
       "errDownloadSave": "{{file}} 저장 실패: {{reason}}",
+      "errDownloadAria2": "aria2c 다운로드 실패({{detail}}). 내려받은 부분은 유지되며 다음에 이어받습니다",
       "errNoUserData": "앱 데이터 폴더를 찾을 수 없어 더빙을 실행할 수 없습니다",
       "trackTitle": "자막 더빙"
     }

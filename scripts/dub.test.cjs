@@ -338,6 +338,28 @@ test('模型下载地址：official 与 mirror 只换主机', () => {
   assert.ok(dub.modelDownloadUrl(talker, 'whatever').startsWith('https://huggingface.co/'));
 });
 
+test('aria2 进度：解析真实 readout 的尺寸对，缺尺寸时按百分比换算', () => {
+  // 真实 aria2c 1.37 的输出（readout 走 stdout，按 \r 原地刷新）
+  assert.deepEqual(
+    dub.parseAria2Readout('[#1 SIZE:1.5MiB/114MiB(1%) CN:4 DL:1.4MiB ETA:1m20s]'),
+    { receivedBytes: Math.round(1.5 * 1024 * 1024), totalBytes: 114 * 1024 * 1024 },
+  );
+  assert.deepEqual(
+    dub.parseAria2Readout('[#2089b0 0B/1000KiB(0%) CN:1 DL:0B]'),
+    { receivedBytes: 0, totalBytes: 1000 * 1024 },
+  );
+  // 只有百分比时用上次已知总大小换算
+  assert.deepEqual(
+    dub.parseAria2Readout('[#1 SIZE:(50%) CN:4]', 1000),
+    { receivedBytes: 500, totalBytes: 1000 },
+  );
+  // 不知道总大小时退化为 0/0，调用方沿用上一次进度
+  assert.deepEqual(dub.parseAria2Readout('[#1 SIZE:(50%)]'), { receivedBytes: 0, totalBytes: 0 });
+  // 非进度行（日志 / 空行）不产出进度
+  assert.equal(dub.parseAria2Readout('[NOTICE] Download complete: x.gguf'), null);
+  assert.equal(dub.parseAria2Readout(''), null);
+});
+
 test('引擎路径：环境变量优先，Windows 开发/打包路径不同，Linux 回退 PATH', () => {
   const root = tempDir();
   const devApp = { isPackaged: false, getAppPath: () => root };
@@ -352,6 +374,46 @@ test('引擎路径：环境变量优先，Windows 开发/打包路径不同，Li
   // 找不到时 Windows/macOS 返回 null（缺失），Linux 回退裸名
   assert.equal(dub.getTtsServerPath({ env: {}, platform: 'win32', app: { isPackaged: true, getAppPath: () => path.join(root, 'nope') } }), null);
   assert.equal(dub.getTtsServerPath({ env: {}, platform: 'linux', app: { getAppPath: () => path.join(root, 'nope') } }), 'tts-server');
+});
+
+test('内置 aria2c 路径：只有 Windows 有，开发走 bin/aria2，打包走 resources/aria2', () => {
+  const root = tempDir();
+  const devExe = path.join(root, 'bin', 'aria2', 'aria2c.exe');
+  fs.mkdirSync(path.dirname(devExe), { recursive: true });
+  fs.writeFileSync(devExe, '');
+  const devApp = { isPackaged: false, getAppPath: () => root };
+  assert.equal(dub.getBundledAria2Path({ app: devApp, platform: 'win32' }), devExe);
+
+  // 打包态：extraResource 把 bin/aria2/ 映射成 resources/aria2/
+  const resources = path.join(root, 'resources');
+  const packedExe = path.join(resources, 'aria2', 'aria2c.exe');
+  fs.mkdirSync(path.dirname(packedExe), { recursive: true });
+  fs.writeFileSync(packedExe, '');
+  const packedApp = { isPackaged: true, getAppPath: () => path.join(root, 'app.asar') };
+  assert.equal(
+    dub.getBundledAria2Path({ app: packedApp, platform: 'win32', resourcesPath: resources }),
+    packedExe,
+  );
+
+  // macOS / Linux / Windows arm64 都没有官方构建：不内置，交给 PATH 探测
+  assert.equal(dub.getBundledAria2Path({ app: devApp, platform: 'darwin' }), null);
+  assert.equal(dub.getBundledAria2Path({ app: devApp, platform: 'linux' }), null);
+  // 文件不存在时不算命中
+  assert.equal(dub.getBundledAria2Path({
+    app: { isPackaged: false, getAppPath: () => path.join(root, 'nope') },
+    platform: 'win32',
+  }), null);
+  // existsSync 可注入（假 fs 场景）
+  assert.equal(dub.getBundledAria2Path({
+    app: devApp,
+    platform: 'win32',
+    fs: { existsSync: () => false },
+  }), null);
+  assert.equal(dub.getBundledAria2Path({
+    app: devApp,
+    platform: 'win32',
+    fs: { existsSync: () => true },
+  }), devExe);
 });
 
 test('引擎环境变量：auto 不设 GGML_BACKEND，vulkan/cpu 分别映射', () => {
@@ -523,7 +585,49 @@ function loadService(options = {}) {
     return server;
   }
 
+  // aria2c 桩：真实 aria2 自己写 .partial，这里由用例按 -d/-o 自行落盘。
+  // --version 是探测探针，回一段版本号并退出 0。
+  function spawnAria2Mock(cmd, args) {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.killed = false;
+    child.signals = [];
+    child.kill = (signal) => {
+      child.killed = true;
+      child.signals.push(signal || 'SIGTERM');
+      // aria2 收到 SIGTERM 会收尾退出（可能带信号名而非退出码）
+      setImmediate(() => child.emit('close', null, signal || 'SIGTERM'));
+    };
+    const record = { cmd, args, child, killed: false };
+    spawned.push(record);
+
+    if (args.includes('--version')) {
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from('aria2 version 1.37.0\nCopyright (C) 2006, 2019 Tatsuhiro Tsujikawa\n'));
+        child.emit('close', 0);
+      });
+      return child;
+    }
+    const dir = args[args.indexOf('-d') + 1];
+    const name = args[args.indexOf('-o') + 1];
+    const target = path.join(dir, name);
+    setImmediate(() => {
+      if (typeof options.onAria2 === 'function') {
+        options.onAria2({ record, target, child });
+        return;
+      }
+      fs.writeFileSync(target, 'aria2-body');
+      child.emit('close', 0);
+    });
+    return child;
+  }
+
   function spawnMock(cmd, args) {
+    // aria2c 可能是注入的桩名、内置的 bin/aria2/aria2c.exe 或 PATH 上的裸名 aria2c
+    if (/^aria2c(-mock)?(\.exe)?$/i.test(path.basename(String(cmd)))) {
+      return spawnAria2Mock(cmd, args);
+    }
     const child = new EventEmitter();
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
@@ -630,19 +734,31 @@ function loadService(options = {}) {
     },
   };
 
-  const service = ctx.module.exports.createDubService({
+  const appRoot = options.appPath || repo;
+  const serviceOptions = {
     fs: fsStub,
-    env: { FFGUI_TTS_SERVER: options.enginePresent === false ? path.join(root, 'missing') : enginePath },
-    platform: 'win32',
+    env: {
+      FFGUI_TTS_SERVER: options.enginePresent === false ? path.join(root, 'missing') : enginePath,
+      ...(options.env || {}),
+    },
+    platform: options.platform || 'win32',
     spawn: (cmd, args) => spawnMock(cmd, args),
     http,
     https: options.https || require('https'),
     app: {
-      isPackaged: false,
-      getAppPath: () => repo,
+      isPackaged: Boolean(options.isPackaged),
+      getAppPath: () => appRoot,
       getPath: () => userData,
     },
-  });
+  };
+  // 打包态的内置资源根（resources/），用于验证内置 aria2c 的打包路径
+  if (options.resourcesPath) serviceOptions.resourcesPath = options.resourcesPath;
+  // aria2c：默认注入 false（视为不可用），避免在装了 aria2c 的机器上真去探测 PATH
+  // 而改变既有用例的行为；options.aria2Probe 时才走真实探测分支（配合 env 覆盖）
+  if (options.aria2Probe !== true) {
+    serviceOptions.aria2 = options.aria2 === undefined ? false : options.aria2;
+  }
+  const service = ctx.module.exports.createDubService(serviceOptions);
 
   return {
     root,
@@ -1107,5 +1223,254 @@ test('模型下载：下载中不允许并发下载或开始配音任务', async
   h.service.cancelDownload();
   const result = await running;
   assert.equal(result.cancelled, true);
+  h.cleanup();
+});
+
+// ---------- 模型下载（注入假 aria2c，不真下载） ----------
+
+test('模型下载：aria2c 可用时走 aria2（-c 续传参数、readout 进度、成功后改名）', async () => {
+  const calls = [];
+  let httpsCalls = 0;
+  const httpsStub = fakeHttps(() => {
+    httpsCalls += 1;
+  });
+  const h = loadService({
+    variant: null,
+    aria2: { path: 'aria2c-mock' },
+    https: httpsStub,
+    onAria2: ({ record, target, child }) => {
+      calls.push(record);
+      // 真实 aria2 会自己落盘 .partial
+      fs.writeFileSync(target, 'aria2-body');
+      child.stdout.emit('data', Buffer.from('[#1 SIZE:4MiB/8MiB(50%) CN:4 DL:5MiB ETA:2s]\r'));
+      child.stdout.emit('data', Buffer.from('[#1 SIZE:8MiB/8MiB(100%) CN:4 DL:5MiB]\r\n'));
+      child.emit('close', 0);
+    },
+  });
+
+  const result = await h.service.download(h.sender, 'Q8_0', 'official');
+  assert.equal(result.cancelled, false);
+  assert.deepEqual([...result.files], [dub.talkerFileName('Q8_0'), dub.tokenizerFileName('Q8_0')]);
+  // 一次下载内不切换实现：aria2 可用时完全不碰 https
+  assert.equal(httpsCalls, 0, 'aria2 可用时不应回退 https');
+
+  // 两个文件各一次 aria2c，参数按断点续传配置
+  assert.equal(calls.length, 2);
+  const talkerArgs = calls[0].args;
+  assert.equal(calls[0].cmd, 'aria2c-mock');
+  assert.equal(talkerArgs[0], '-c', '必须开断点续传');
+  assert.equal(talkerArgs[talkerArgs.indexOf('-d') + 1], h.modelsDir);
+  assert.equal(
+    talkerArgs[talkerArgs.indexOf('-o') + 1],
+    `${dub.talkerFileName('Q8_0')}${'.ffgui-partial'}`,
+    '先写 .partial',
+  );
+  for (const flag of [
+    '--file-allocation=none',
+    '--max-tries=0',
+    '--auto-file-renaming=false',
+    '--check-certificate=true',
+    '--show-console-readout=true',
+    // 控制文件落盘间隔必须很小，否则取消时来不及保存进度
+    '--auto-save-interval=1',
+    // 注意是 console-log-level：真实 aria2 不认 console-read-level
+    '--console-log-level=notice',
+  ]) {
+    assert.ok(talkerArgs.includes(flag), `缺少参数 ${flag}`);
+  }
+  assert.equal(talkerArgs[talkerArgs.indexOf('-U') + 1], 'FFGui/1.0 (https://github.com/kisaragychihaya/ffgui)');
+  assert.ok(talkerArgs[talkerArgs.length - 1].startsWith(
+    'https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/main/',
+  ), 'URL 放最后');
+
+  // 模型落到最终文件名，没有 .partial 残留
+  for (const file of result.files) {
+    const target = path.join(h.modelsDir, file);
+    assert.equal(fs.readFileSync(target).toString(), 'aria2-body');
+    assert.equal(fs.existsSync(`${target}.ffgui-partial`), false);
+  }
+  // 进度来自 readout 的尺寸对
+  const progress = h.events.filter((event) => event.type === 'download-progress');
+  assert.equal(progress[0].receivedBytes, 4 * 1024 * 1024);
+  assert.equal(progress[0].totalBytes, 8 * 1024 * 1024);
+  assert.equal(progress[1].receivedBytes, 8 * 1024 * 1024);
+  assert.deepEqual(h.events.map((event) => event.type), [
+    'download-start', 'download-progress', 'download-progress', 'download-done',
+    'download-start', 'download-progress', 'download-progress', 'download-done',
+  ]);
+  assert.equal(h.events.find((event) => event.type === 'download-done').bytes, 'aria2-body'.length);
+  const status = await h.service.status();
+  assert.equal(status.state, 'ok');
+  h.cleanup();
+});
+
+test('模型下载：aria2 中途取消保留 .partial 与控制文件（下次 -c 续传）', async () => {
+  const partialName = `${dub.talkerFileName('Q8_0')}${'.ffgui-partial'}`;
+  let aria2 = null;
+  const h = loadService({
+    variant: null,
+    aria2: 'aria2c-mock',
+    onAria2: ({ record, target, child }) => {
+      aria2 = { record, target, child };
+      fs.writeFileSync(target, 'half-way');
+      fs.writeFileSync(`${target}.aria2`, 'control');
+      child.stdout.emit('data', Buffer.from('[#1 SIZE:1MiB/8MiB(12%) CN:4 DL:5MiB]\r'));
+      // 之后不再输出，等用例取消
+    },
+  });
+
+  const running = h.service.download(h.sender, 'Q8_0', 'official');
+  const deadline = Date.now() + 10000;
+  while (!h.events.some((event) => event.type === 'download-progress') && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.ok(aria2, '应已启动 aria2c');
+  assert.equal(h.service.cancelDownload(), true);
+
+  const result = await running;
+  assert.equal(result.cancelled, true);
+  assert.deepEqual([...result.files], []);
+  // 先 SIGTERM 让 aria2 收尾落盘控制文件
+  assert.deepEqual(aria2.child.signals, ['SIGTERM']);
+  const partial = path.join(h.modelsDir, partialName);
+  assert.equal(fs.existsSync(partial), true, 'aria2 路径取消后半成品必须保留');
+  assert.equal(fs.existsSync(`${partial}.aria2`), true, '控制文件保留才能续传');
+  assert.equal(fs.existsSync(path.join(h.modelsDir, dub.talkerFileName('Q8_0'))), false);
+  assert.equal(h.events.some((event) => event.type === 'download-done'), false);
+  const status = await h.service.status();
+  assert.equal(status.downloading, null);
+  assert.equal(status.state, 'no-model');
+  h.cleanup();
+});
+
+test('模型下载：aria2 非零退出码报错、保留半成品、错误可读', async () => {
+  const h = loadService({
+    variant: null,
+    aria2: 'aria2c-mock',
+    onAria2: ({ target, child }) => {
+      fs.writeFileSync(target, 'half-way');
+      fs.writeFileSync(`${target}.aria2`, 'control');
+      child.stderr.emit('data', Buffer.from('Exception caught\nDownload aborted. URI=https://huggingface.co/x\n'));
+      child.emit('close', 1);
+    },
+  });
+
+  await assert.rejects(
+    () => h.service.download(h.sender, 'Q4_K_M', 'official'),
+    (err) => err.code === 'FFGUI_DUB_DOWNLOAD' && /exit=1/.test(err.message),
+  );
+  const errorEvent = h.events.find((event) => event.type === 'download-error');
+  assert.ok(errorEvent, '应发出 download-error');
+  assert.match(errorEvent.error, /exit=1/);
+  assert.match(errorEvent.error, /Download aborted/, '错误里带 aria2 的最后一行输出');
+  assert.equal(errorEvent.file, dub.talkerFileName('Q4_K_M'));
+  assert.equal(errorEvent.code, 'FFGUI_DUB_DOWNLOAD');
+
+  const partial = path.join(h.modelsDir, `${dub.talkerFileName('Q4_K_M')}.ffgui-partial`);
+  assert.equal(fs.existsSync(partial), true, 'aria2 失败也要保留半成品');
+  assert.equal(fs.existsSync(`${partial}.aria2`), true);
+  assert.equal(fs.existsSync(path.join(h.modelsDir, dub.talkerFileName('Q4_K_M'))), false);
+  h.cleanup();
+});
+
+test('模型下载：未注入时按环境变量 FFGUI_ARIA2 探测一次并缓存结果', async () => {
+  const httpsStub = fakeHttps(() => {});
+  const h = loadService({
+    variant: null,
+    aria2Probe: true,
+    env: { FFGUI_ARIA2: 'aria2c-mock' },
+    https: httpsStub,
+  });
+
+  await h.service.download(h.sender, 'Q8_0', 'official');
+  const probes = () => h.spawned.filter((record) => record.cmd === 'aria2c-mock'
+    && record.args.includes('--version'));
+  assert.equal(probes().length, 1, '应通过 aria2c --version 探测');
+
+  // 第二次下载复用缓存，不再探测
+  await h.service.download(h.sender, 'Q4_K_M', 'official');
+  assert.equal(probes().length, 1, '探测结果应缓存');
+  assert.equal(fs.existsSync(path.join(h.modelsDir, dub.talkerFileName('Q4_K_M'))), true);
+  h.cleanup();
+});
+
+test('模型下载：空的控制文件在下次 aria2 下载前被清掉，按 .partial 长度续传', async () => {
+  // 下载不到 1 秒就被取消会留下 0 字节的 .aria2；带它重试 aria2 直接 exit 1 且无输出
+  const states = [];
+  const h = loadService({
+    variant: null,
+    aria2: 'aria2c-mock',
+    onAria2: ({ target, child }) => {
+      states.push(fs.existsSync(`${target}.aria2`));
+      fs.writeFileSync(target, 'aria2-body');
+      child.emit('close', 0);
+    },
+  });
+  const partial = path.join(h.modelsDir, `${dub.talkerFileName('Q8_0')}${'.ffgui-partial'}`);
+  fs.writeFileSync(partial, 'half-way');
+  fs.writeFileSync(`${partial}.aria2`, '');
+
+  const result = await h.service.download(h.sender, 'Q8_0', 'official');
+  assert.equal(result.cancelled, false);
+  assert.deepEqual(states, [false, false], '空控制文件必须在 spawn 之前删掉');
+  assert.equal(fs.readFileSync(path.join(h.modelsDir, dub.talkerFileName('Q8_0'))).toString(), 'aria2-body');
+  assert.equal(fs.existsSync(`${partial}.aria2`), false);
+  h.cleanup();
+});
+
+// ---------- 模型下载：内置 aria2c（随包分发） ----------
+
+test('模型下载：Windows 开发态命中内置 bin/aria2/aria2c.exe，不再探测 PATH', async () => {
+  // 内置二进制就放在 appRoot/bin/aria2/ 下（开发态 app.getAppPath() 指向项目根）
+  const appPath = tempDir();
+  const bundled = path.join(appPath, 'bin', 'aria2', 'aria2c.exe');
+  fs.mkdirSync(path.dirname(bundled), { recursive: true });
+  fs.writeFileSync(bundled, '');
+  const h = loadService({ variant: null, aria2Probe: true, appPath });
+
+  const result = await h.service.download(h.sender, 'Q8_0', 'official');
+  assert.equal(result.cancelled, false);
+  const aria2Calls = h.spawned.filter((record) => /aria2c/i.test(String(record.cmd)));
+  assert.equal(aria2Calls.length, 2, '两个文件各一次 aria2c');
+  for (const call of aria2Calls) {
+    assert.equal(call.cmd, bundled, '应直接使用内置二进制');
+    assert.equal(call.args.includes('--version'), false, '内置二进制命中即信任，不跑探针');
+  }
+  assert.equal(fs.existsSync(path.join(h.modelsDir, dub.talkerFileName('Q8_0'))), true);
+  h.cleanup();
+});
+
+test('模型下载：打包态命中 resources/aria2/aria2c.exe', async () => {
+  const resourcesPath = path.join(tempDir(), 'resources');
+  const h = loadService({
+    variant: null,
+    aria2Probe: true,
+    isPackaged: true,
+    appPath: path.join(resourcesPath, 'app.asar'),
+    resourcesPath,
+  });
+  const packedExe = path.join(resourcesPath, 'aria2', 'aria2c.exe');
+  fs.mkdirSync(path.dirname(packedExe), { recursive: true });
+  fs.writeFileSync(packedExe, '');
+
+  const result = await h.service.download(h.sender, 'Q8_0', 'official');
+  assert.equal(result.cancelled, false);
+  const aria2Calls = h.spawned.filter((record) => /aria2c/i.test(String(record.cmd)));
+  assert.equal(aria2Calls.length, 2);
+  for (const call of aria2Calls) {
+    assert.equal(call.cmd, packedExe);
+    assert.equal(call.args.includes('--version'), false);
+  }
+  h.cleanup();
+});
+
+test('模型下载：内置缺失时回退 PATH 探测 aria2c', async () => {
+  const h = loadService({ variant: null, aria2Probe: true, appPath: tempDir() });
+  const result = await h.service.download(h.sender, 'Q8_0', 'official');
+  assert.equal(result.cancelled, false);
+  const probes = h.spawned.filter((record) => record.cmd === 'aria2c' && record.args.includes('--version'));
+  assert.equal(probes.length, 1, '没有内置二进制时应探测 PATH');
+  const downloads = h.spawned.filter((record) => record.cmd === 'aria2c' && record.args.includes('-c'));
+  assert.equal(downloads.length, 2, '探测通过后用 PATH 上的 aria2c 下载');
   h.cleanup();
 });

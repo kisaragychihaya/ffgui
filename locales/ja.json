@@ -705,6 +705,7 @@
       "errDownloadTimeout": "モデルのダウンロードがタイムアウトしました",
       "errDownloadAborted": "ダウンロードは中止されました",
       "errDownloadSave": "{{file}} の保存に失敗しました：{{reason}}",
+      "errDownloadAria2": "aria2c のダウンロードに失敗しました（{{detail}}）。ダウンロード済みの部分は保持され、次回続きから再開できます",
       "errNoUserData": "アプリのデータフォルダーを特定できないため、吹き替えを実行できません",
       "trackTitle": "字幕吹き替え"
     }

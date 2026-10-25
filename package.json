@@ -1,7 +1,7 @@
 {
   "name": "ffgui",
   "productName": "FFGui",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "main": "index.js",
   "scripts": {
     "test": "node --test scripts/regression.test.cjs scripts/i18n.test.cjs scripts/cdrip.test.cjs scripts/cd-ui.test.cjs scripts/dub.test.cjs",

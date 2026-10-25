@@ -47,10 +47,13 @@ main/dub.js         字幕配音（dub）：spawn 本地 TTS 引擎 tts-server�
                     resources/tts/；环境变量 FFGUI_TTS_SERVER 可覆盖引擎路径供开发调试），
                     起 127.0.0.1 上的 OpenAI 兼容 HTTP 服务并按字幕条目逐条合成语音，再由
                     ffmpeg 按字幕原始时间轴拼装音频、与源视频混流输出。模型 GGUF 不随包
-                    分发：首次使用下载到 userData/tts-models/（官方地址与 hf-mirror 镜像可
-                    切）。下载器 resolveAria2 按四级优先：options.aria2 注入 → 环境变量
-                    FFGUI_ARIA2（会跑 --version 自检）→ 内置 aria2c（开发 bin/aria2/，
-                    打包后 Windows 在 resources/aria2/aria2c.exe、macOS 在
+                    分发：首次使用下载到 userData/tts-models/，下载源三选一 —— 官方
+                    huggingface.co、hf-mirror.com、ModelScope
+                    （modelscope.cn/models/leletxh/Qwen3-TTS-GGUF，第三方搬运仓库，分支
+                    master）；ModelScope 缺 Q4_K_M 的两个 gguf，该变体自动回退 hf-mirror
+                    （resolveModelDownload）。下载器 resolveAria2 按四级优先：options.aria2
+                    注入 → 环境变量 FFGUI_ARIA2（会跑 --version 自检）→ 内置 aria2c（开发
+                    bin/aria2/，打包后 Windows 在 resources/aria2/aria2c.exe、macOS 在
                     resources/bin/aria2/aria2c，命中即信任不探测）→ PATH 上的 aria2c；
                     全都没有才回退内置 https 实现（该路径失败即删半成品）。内置二进制由
                     CI 提供：Windows 取 aria2 官方 x64 构建（WOA 靠 Win11 模拟执行），

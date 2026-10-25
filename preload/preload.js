@@ -88,7 +88,7 @@ contextBridge.exposeInMainWorld('ffgui', {
   dubStatus: () => ipcRenderer.invoke('ffgui:dub-status'),
   // 引擎支持的发音语言（id + 词典键，渲染层用 t(dictKey) 显示）
   dubLanguages: () => ipcRenderer.invoke('ffgui:dub-languages'),
-  // variant: 'Q4_K_M' | 'Q8_0'；mirror: 'official' | 'mirror'
+  // variant: 'Q4_K_M' | 'Q8_0'；mirror: 'official' | 'hfmirror' | 'modelscope'（非法值按 official）
   // 主进程按单个 payload 对象解构 { variant, mirror }
   dubDownloadModel: (variant, mirror) => ipcRenderer.invoke('ffgui:dub-download', { variant, mirror }),
   dubCancelDownload: () => ipcRenderer.invoke('ffgui:dub-cancel-download'),

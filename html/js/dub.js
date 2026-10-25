@@ -15,7 +15,9 @@
 
   // 模型变体 / 下载源 / 推理后端 / 输出容器：与主进程白名单一一对应
   const VARIANTS = ['Q8_0', 'Q4_K_M'];
-  const MIRRORS = ['official', 'mirror'];
+  // 下载源与 main/dub.js 的 MIRROR_MODES 一一对应（ModelScope 缺 Q4_K_M 时主进程
+  // 自动回退 hf-mirror，渲染层不必区分）
+  const MIRRORS = ['official', 'hfmirror', 'modelscope'];
   const BACKENDS = ['auto', 'vulkan', 'cpu'];
   const CONTAINERS = ['same', 'mp4', 'mkv'];
 
@@ -561,6 +563,11 @@
     return VARIANTS.includes(value) ? value : VARIANTS[0];
   }
 
+  function currentMirror() {
+    const value = String(els.mirror.value || '');
+    return MIRRORS.includes(value) ? value : MIRRORS[0];
+  }
+
   function currentJob() {
     return buildDubJob({
       id: state.jobId,
@@ -829,7 +836,7 @@
     els.download.disabled = true;
     setDownloadMsg('dub.downloadStarting');
     try {
-      await window.ffgui.dubDownloadModel(currentVariant(), els.mirror.value);
+      await window.ffgui.dubDownloadModel(currentVariant(), currentMirror());
     } catch (err) {
       setDownloadMsg('dub.downloadError', { error: errText(err) });
       log(t('dub.logDownloadFailed', { error: errText(err) }), 'error');

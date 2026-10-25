@@ -44,11 +44,16 @@ const SPEECH_TIMEOUT_MS = 300000;
 
 const MODEL_VARIANTS = ['Q4_K_M', 'Q8_0'];
 const DEFAULT_VARIANT_ORDER = ['Q8_0', 'Q4_K_M'];
+// 三个下载源：官方 HF / hf-mirror / ModelScope。前两个是同一份仓库，ModelScope
+// 是第三方搬运的镜像仓库（路径带 models/ 前缀、分支 master，且缺 Q4_K_M 的文件）
 const MODEL_BASE_HOSTS = {
   official: 'https://huggingface.co',
-  mirror: 'https://hf-mirror.com',
+  hfmirror: 'https://hf-mirror.com',
+  modelscope: 'https://modelscope.cn',
 };
 const MODEL_REPO = 'Serveurperso/Qwen3-TTS-GGUF';
+const MODELSCOPE_REPO = 'leletxh/Qwen3-TTS-GGUF';
+const MIRROR_MODES = new Set(['official', 'hfmirror', 'modelscope']);
 const USER_AGENT = 'FFGui/1.0 (https://github.com/kisaragychihaya/ffgui)';
 
 // aria2c（模型下载优先用它，支持断点续传）：探测超时、取消时的宽限期
@@ -64,10 +69,31 @@ function tokenizerFileName(variant) {
   return `qwen-tokenizer-12hz-${variant}.gguf`;
 }
 
-// 下载地址：official 走 huggingface.co，mirror 换成 hf-mirror.com（国内镜像）
+// 用哪个源（非法值一律回 official，保持宽松）：ModelScope 的文件清单里没有
+// Q4_K_M 的两个 gguf，故该变体在 ModelScope 下自动回退 hf-mirror
+function normalizeMirrorMode(mirror) {
+  return MIRROR_MODES.has(mirror) ? mirror : 'official';
+}
+
+// 下载地址：official 走 huggingface.co，hfmirror 换成 hf-mirror.com，
+// modelscope 走镜像仓库的 master 分支（与 HF 的 resolve/main 路径不同）
 function modelDownloadUrl(file, mirror = 'official') {
-  const host = MODEL_BASE_HOSTS[mirror === 'mirror' ? 'mirror' : 'official'];
+  if (mirror === 'modelscope') {
+    return `${MODEL_BASE_HOSTS.modelscope}/models/${MODELSCOPE_REPO}/resolve/master/${file}`;
+  }
+  const host = MODEL_BASE_HOSTS[mirror === 'hfmirror' ? 'hfmirror' : 'official'];
   return `${host}/${MODEL_REPO}/resolve/main/${file}`;
+}
+
+// 单个文件最终使用的下载地址：ModelScope 缺 Q4_K_M（变体由文件名决定），
+// 遇到时改走 hf-mirror，其余情况按所选源
+function resolveModelDownload(file, mirror = 'official') {
+  const mode = normalizeMirrorMode(mirror);
+  if (mode === 'modelscope' && String(file || '').includes('-Q4_K_M')) {
+    console.log(`[ffgui] ModelScope 缺 Q4_K_M 文件（${file}），回退 hf-mirror`);
+    return modelDownloadUrl(file, 'hfmirror');
+  }
+  return modelDownloadUrl(file, mode);
 }
 
 // ---------- 纯函数：aria2c 进度 ----------
@@ -1325,8 +1351,9 @@ function createDubService(options = {}) {
     }
     const args = [
       '-c',
-      // 多连接切片：模型主机（HF / hf-mirror）都支持 Range，16 连接能明显吃满带宽；
-      // -k 1M 是 aria2 允许的最小切片下限，避免切片过小反而降低吞吐
+      // 多连接切片：模型主机（HF / hf-mirror / ModelScope 的 CDN）都支持 Range，
+      // 16 连接能明显吃满带宽；-k 1M 是 aria2 允许的最小切片下限，避免切片过小
+      // 反而降低吞吐
       '-x', '16',
       '-s', '16',
       '-k', '1M',
@@ -1576,7 +1603,7 @@ function createDubService(options = {}) {
     if (!MODEL_VARIANTS.includes(variantName)) {
       throw invalid('variant', t('main.dub.errVariant', { variant: String(variant) }));
     }
-    const mirrorMode = mirror === 'mirror' ? 'mirror' : 'official';
+    const mirrorMode = normalizeMirrorMode(mirror);
     const files = [talkerFileName(variantName), tokenizerFileName(variantName)];
     const abort = new AbortController();
     downloadState = {
@@ -1598,7 +1625,7 @@ function createDubService(options = {}) {
         if (downloadState.cancelRequested) break;
         const target = path.join(modelsDir, file);
         const partial = target + PARTIAL_SUFFIX;
-        const url = modelDownloadUrl(file, mirrorMode);
+        const url = resolveModelDownload(file, mirrorMode);
         downloadState.file = file;
         downloadState.partial = partial;
         downloadState.receivedBytes = 0;
@@ -1993,6 +2020,8 @@ module.exports = {
   getTtsServerPath,
   getBundledAria2Path,
   modelDownloadUrl,
+  resolveModelDownload,
+  normalizeMirrorMode,
   parseAria2Readout,
   talkerFileName,
   tokenizerFileName,

@@ -322,7 +322,7 @@ test('输出路径：撞名加序号，并避开输入文件', () => {
 
 // ---------- 模型与引擎路径 ----------
 
-test('模型下载地址：official 与 mirror 只换主机', () => {
+test('模型下载地址：三个源各自的仓库路径', () => {
   const talker = dub.talkerFileName('Q4_K_M');
   assert.equal(talker, 'qwen-talker-1.7b-base-Q4_K_M.gguf');
   assert.equal(dub.tokenizerFileName('Q8_0'), 'qwen-tokenizer-12hz-Q8_0.gguf');
@@ -331,11 +331,54 @@ test('模型下载地址：official 与 mirror 只换主机', () => {
     `https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/main/${talker}`,
   );
   assert.equal(
-    dub.modelDownloadUrl(talker, 'mirror'),
+    dub.modelDownloadUrl(talker, 'hfmirror'),
     `https://hf-mirror.com/Serveurperso/Qwen3-TTS-GGUF/resolve/main/${talker}`,
+  );
+  // ModelScope 是第三方搬运仓库：路径带 models/ 前缀，分支是 master
+  assert.equal(
+    dub.modelDownloadUrl(talker, 'modelscope'),
+    `https://modelscope.cn/models/leletxh/Qwen3-TTS-GGUF/resolve/master/${talker}`,
   );
   // 未识别的 mirror 值按 official 处理
   assert.ok(dub.modelDownloadUrl(talker, 'whatever').startsWith('https://huggingface.co/'));
+  // 非 official/hfmirror 的一律回 official（含已废弃的旧值 'mirror' 与 modelscope 以外的新值）
+  assert.ok(dub.modelDownloadUrl(talker, 'mirror').startsWith('https://huggingface.co/'));
+});
+
+test('模型下载地址：ModelScope 缺 Q4_K_M 时回退 hf-mirror', () => {
+  const talkerQ8 = dub.talkerFileName('Q8_0');
+  const tokenizerQ8 = dub.tokenizerFileName('Q8_0');
+  const talkerQ4 = dub.talkerFileName('Q4_K_M');
+  const tokenizerQ4 = dub.tokenizerFileName('Q4_K_M');
+  // Q8_0 在 ModelScope 上有，两个文件都走 ModelScope
+  for (const file of [talkerQ8, tokenizerQ8]) {
+    assert.equal(
+      dub.resolveModelDownload(file, 'modelscope'),
+      `https://modelscope.cn/models/leletxh/Qwen3-TTS-GGUF/resolve/master/${file}`,
+    );
+  }
+  // Q4_K_M 的两个 gguf 在 ModelScope 缺文件，改走 hf-mirror
+  for (const file of [talkerQ4, tokenizerQ4]) {
+    assert.equal(
+      dub.resolveModelDownload(file, 'modelscope'),
+      `https://hf-mirror.com/Serveurperso/Qwen3-TTS-GGUF/resolve/main/${file}`,
+    );
+  }
+  // 明确选了别的源就不回退
+  assert.ok(dub.resolveModelDownload(talkerQ4, 'hfmirror').startsWith('https://hf-mirror.com/'));
+  assert.ok(dub.resolveModelDownload(talkerQ4, 'official').startsWith('https://huggingface.co/'));
+  assert.ok(dub.resolveModelDownload(talkerQ8, 'official').startsWith('https://huggingface.co/'));
+  // 未识别的源按 official，也不触发回退
+  assert.ok(dub.resolveModelDownload(talkerQ4, 'whatever').startsWith('https://huggingface.co/'));
+});
+
+test('镜像源归一：三个合法值原样返回，其余回 official', () => {
+  for (const mode of ['official', 'hfmirror', 'modelscope']) {
+    assert.equal(dub.normalizeMirrorMode(mode), mode);
+  }
+  for (const bad of ['mirror', 'ModelScope', '', undefined, null, 'hf-mirror.net']) {
+    assert.equal(dub.normalizeMirrorMode(bad), 'official');
+  }
 });
 
 test('aria2 进度：解析真实 readout 的尺寸对，缺尺寸时按百分比换算', () => {
@@ -1134,13 +1177,13 @@ test('模型下载：跟随 302、按 content-length 报进度、.partial 改名
   });
   const h = loadService({ variant: null, https: httpsStub });
 
-  const result = await h.service.download(h.sender, 'Q8_0', 'mirror');
+  const result = await h.service.download(h.sender, 'Q8_0', 'hfmirror');
   assert.equal(result.cancelled, false);
   assert.equal(result.variant, 'Q8_0');
   // result.files 来自 vm 沙箱，展开成当前 realm 的数组再比较
   assert.deepEqual([...result.files], [dub.talkerFileName('Q8_0'), dub.tokenizerFileName('Q8_0')]);
 
-  // 主站地址用 mirror 主机，302 后跟到 CDN
+  // 主站地址用 hf-mirror 主机，302 后跟到 CDN
   assert.equal(urls.length, 4);
   assert.ok(urls[0].url.startsWith(`https://hf-mirror.com/Serveurperso/Qwen3-TTS-GGUF/resolve/main/${result.files[0]}`));
   assert.ok(urls[1].url.startsWith('https://cdn.example.com/'));
@@ -1169,6 +1212,68 @@ test('模型下载：跟随 302、按 content-length 报进度、.partial 改名
   assert.equal(status.state, 'ok');
   assert.equal(status.models.variant, 'Q8_0');
   assert.equal(status.downloading, null);
+  h.cleanup();
+});
+
+test('模型下载：ModelScope 源走镜像仓库 master 路径，302 后跟到 CDN', async () => {
+  const urls = [];
+  const body = Buffer.from('modelscope-body');
+  const httpsStub = fakeHttps((url, opts, cb) => {
+    urls.push({ url, accept: opts.headers.Accept });
+    if (/resolve\/(main|master)\//.test(url) && !url.includes('cdn.example.com')) {
+      // ModelScope 也是 302 到自家 CDN
+      cb(fakeResponse({ statusCode: 302, headers: { location: 'https://cdn.example.com/ms?sig=1' } }));
+      return;
+    }
+    cb(fakeResponse({ statusCode: 200, headers: { 'content-length': String(body.length) }, chunks: [body] }));
+  });
+  const h = loadService({ variant: null, https: httpsStub });
+
+  const result = await h.service.download(h.sender, 'Q8_0', 'modelscope');
+  assert.equal(result.cancelled, false);
+  assert.equal(urls.length, 4);
+  // Q8_0 在 ModelScope 上有：主站用镜像仓库地址，302 后跟到 CDN
+  assert.equal(
+    urls[0].url.split('?')[0],
+    `https://modelscope.cn/models/leletxh/Qwen3-TTS-GGUF/resolve/master/${result.files[0]}`,
+  );
+  assert.ok(urls[1].url.startsWith('https://cdn.example.com/'));
+  assert.equal(
+    urls[2].url.split('?')[0],
+    `https://modelscope.cn/models/leletxh/Qwen3-TTS-GGUF/resolve/master/${result.files[1]}`,
+  );
+  // download-start 事件里带的就是实际使用的源与地址
+  const start = h.events.find((event) => event.type === 'download-start');
+  assert.equal(start.mirror, 'modelscope');
+  assert.ok(start.url.startsWith('https://modelscope.cn/models/leletxh/'));
+  for (const file of result.files) {
+    assert.equal(fs.readFileSync(path.join(h.modelsDir, file)).toString(), body.toString());
+  }
+  h.cleanup();
+});
+
+test('模型下载：ModelScope 缺 Q4_K_M，两个文件都回退 hf-mirror', async () => {
+  const urls = [];
+  const body = Buffer.from('fallback-body');
+  const httpsStub = fakeHttps((url, opts, cb) => {
+    urls.push(url);
+    cb(fakeResponse({ statusCode: 200, headers: { 'content-length': String(body.length) }, chunks: [body] }));
+  });
+  const h = loadService({ variant: null, https: httpsStub });
+
+  const result = await h.service.download(h.sender, 'Q4_K_M', 'modelscope');
+  assert.equal(result.cancelled, false);
+  assert.deepEqual([...result.files], [
+    dub.talkerFileName('Q4_K_M'),
+    dub.tokenizerFileName('Q4_K_M'),
+  ]);
+  assert.equal(urls.length, 2);
+  for (const url of urls) {
+    assert.ok(url.startsWith('https://hf-mirror.com/Serveurperso/Qwen3-TTS-GGUF/resolve/main/'));
+  }
+  const status = await h.service.status();
+  assert.equal(status.state, 'ok');
+  assert.equal(status.models.variant, 'Q4_K_M');
   h.cleanup();
 });
 
@@ -1335,6 +1440,40 @@ test('模型下载：aria2c 可用时走 aria2（-c 续传参数、readout 进�
   const status = await h.service.status();
   assert.equal(status.state, 'ok');
   h.cleanup();
+});
+
+test('模型下载：aria2 下 ModelScope 的 Q8_0 用镜像仓库地址，Q4_K_M 回退 hf-mirror', async () => {
+  // 两次下载各跑一遍：Q8_0 全部走 ModelScope，Q4_K_M 两个文件都回退 hf-mirror
+  async function runWith(variant) {
+    const calls = [];
+    const h = loadService({
+      variant: null,
+      aria2: { path: 'aria2c-mock' },
+      onAria2: ({ record, target, child }) => {
+        calls.push(record);
+        fs.writeFileSync(target, 'aria2-body');
+        child.emit('close', 0);
+      },
+    });
+    const result = await h.service.download(h.sender, variant, 'modelscope');
+    const urls = calls.map((record) => record.args[record.args.length - 1]);
+    h.cleanup();
+    return { cancelled: result.cancelled, urls, files: [...result.files] };
+  }
+
+  const q8 = await runWith('Q8_0');
+  assert.equal(q8.cancelled, false);
+  assert.deepEqual(q8.urls, [
+    `https://modelscope.cn/models/leletxh/Qwen3-TTS-GGUF/resolve/master/${q8.files[0]}`,
+    `https://modelscope.cn/models/leletxh/Qwen3-TTS-GGUF/resolve/master/${q8.files[1]}`,
+  ]);
+
+  const q4 = await runWith('Q4_K_M');
+  assert.equal(q4.cancelled, false);
+  assert.deepEqual(q4.urls, [
+    `https://hf-mirror.com/Serveurperso/Qwen3-TTS-GGUF/resolve/main/${q4.files[0]}`,
+    `https://hf-mirror.com/Serveurperso/Qwen3-TTS-GGUF/resolve/main/${q4.files[1]}`,
+  ]);
 });
 
 test('模型下载：aria2 中途取消保留 .partial 与控制文件（下次 -c 续传）', async () => {

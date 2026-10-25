@@ -8,8 +8,9 @@
 + `scripts/cd-ui.test.cjs`，生成独立临时媒体并自动清理；字幕配音（dub）的专项测试按同一命名
 约定是 `scripts/dub.test.cjs`（主进程：引擎路径解析、ffmpeg 命令组装、字幕条目解析与时间轴
 换算、模型下载的 https/aria2 两条路径与内置 aria2c 路径解析——aria2 用注入的假 spawn，
-默认注入 `aria2: false` 避免真探测 PATH）与 `scripts/dub-ui.test.cjs`（页面纯逻辑，注入真实
-`locales/zh-CN.json`），新增后要一并加进 `package.json` 的 `npm test`；
+默认注入 `aria2: false` 避免真探测 PATH）；dub 页的纯逻辑 UI 测试文件
+（`scripts/dub-ui.test.cjs`，仿 `cd-ui.test.cjs` 注入真实 `locales/zh-CN.json`）尚未建立，
+新增后要一并加进 `package.json` 的 `npm test`；
 侧车/页面专项用
 `node --test scripts/disc.test.cjs scripts/disc-sidecar.test.cjs scripts/disc-ui.test.cjs`，
 Rust 侧车 `cd native/ffgui-disc && cargo test --locked`。`disc-ui.test.cjs` 用 vm 抽取
@@ -26,7 +27,9 @@ Rust 侧车 `cd native/ffgui-disc && cargo test --locked`。`disc-ui.test.cjs` �
 统一光盘页（disc.html）验证类型切换、ISO/目录/光驱的探测、选轨、抓取与取消（视频盘需真实
 光盘环境）；选「音乐 CD」后验证光驱枚举、读 TOC、MusicBrainz 查询与填充、逐轨抓 FLAC 与
 取消（需真实音乐 CD）；
-字幕配音页验证引擎启动（无引擎时报错是否可读）、模型下载与镜像切换（用随包内置的 aria2c：
+字幕配音页验证引擎启动（无引擎时报错是否可读）、模型下载与三源切换（官方 / hf-mirror /
+ModelScope；选 ModelScope + Q4_K_M 时主进程会打 `[ffgui]` 日志并回退 hf-mirror，Q8_0 才真正
+走 modelscope.cn。用随包内置的 aria2c：
 Windows 是 `resources/aria2/aria2c.exe`，macOS 是 `resources/bin/aria2/aria2c`。下载中途取消、
 重进页面再点下载应续传而不是从 0 开始；`FFGUI_ARIA2` 指向不存在的路径 + PATH 里也没有
 aria2c 时，应自动回退内置 https 下载）、
@@ -75,8 +78,11 @@ aria2c 时，应自动回退内置 https 下载）、
   macOS 与 Windows arm64 **仅 CPU**（macOS 的 Metal 由 ggml 在 APPLE 下默认开启，MoltenVK
   未做）；运行期还要求机器有可用的 Vulkan 驱动，否则 Vulkan 版起不来。ggml 默认按**动态库**
   构建，`bin/tts/` 里必须同时有 `ggml*.dll`（缺了 tts-server 直接起不来）。模型是 talker +
-  tokenizer 两个 GGUF，不随包分发，首次使用下载到 `userData/tts-models/`（官方地址与
-  hf-mirror 镜像可切）。下载优先用 aria2c：Windows 随包内置 `resources/aria2/aria2c.exe`
+  tokenizer 两个 GGUF，不随包分发，首次使用下载到 `userData/tts-models/`。下载源可选官方
+  HuggingFace、hf-mirror.com、ModelScope（页面「下载源」下拉，值 official / hfmirror /
+  modelscope）：ModelScope 用的是第三方搬运仓库 `leletxh/Qwen3-TTS-GGUF`，只有 Q8_0 的两个
+  文件，**选它并下载 Q4_K_M 时两个文件都会自动回退 hf-mirror**（控制台有 `[ffgui]` 日志）。
+  下载优先用 aria2c：Windows 随包内置 `resources/aria2/aria2c.exe`
   （x64 为原生构建，WOA 用同一份 x64 由 Win11 系统模拟执行），macOS 随包内置原生编译的
   `resources/bin/aria2/aria2c`（静态 OpenSSL，`--with-ca-bundle=/etc/ssl/cert.pem`），Linux 与
   其他没有内置二进制的场合探 PATH；`FFGUI_ARIA2` 可指定可执行文件。aria2 走 `-c` 断点续传：

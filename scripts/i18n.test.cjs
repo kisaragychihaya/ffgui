@@ -12,7 +12,7 @@ const vm = require('node:vm');
 
 const repo = path.resolve(__dirname, '..');
 const LANGS = ['zh-CN', 'zh-TW', 'en', 'ja', 'ko'];
-const PAGES = ['index', 'convert', 'merge', 'clip', 'crop', 'record', 'disc', 'cdrip'];
+const PAGES = ['index', 'convert', 'merge', 'clip', 'crop', 'record', 'disc', 'cdrip', 'dub'];
 
 const dicts = Object.fromEntries(LANGS.map((lng) => [
   lng, JSON.parse(fs.readFileSync(path.join(repo, 'locales', `${lng}.json`), 'utf8')),
@@ -84,9 +84,12 @@ test('词典：页面与脚本引用的键全部存在，且无未使用的键',
       .map((file) => fs.readFileSync(file, 'utf8')).join('\n')).join('\n')
     + fs.readFileSync(path.join(repo, 'html/js/theme.js'), 'utf8')
     + fs.readFileSync(path.join(repo, 'html/js/i18n.js'), 'utf8')
-    // 主进程文案（报错 / 对话框标题 / 筛选器名）
-    + ['main/ffmpeg.js', 'main/disc.js', 'main/cdrip.js', 'main/i18n.js']
-      .map((file) => fs.readFileSync(path.join(repo, file), 'utf8')).join('\n');
+    // 主进程文案（报错 / 对话框标题 / 筛选器名）；新模块不存在时跳过，
+    // 存在即计入语料，其词典键必须被真正引用
+    + ['main/ffmpeg.js', 'main/disc.js', 'main/cdrip.js', 'main/i18n.js', 'main/dub.js']
+      .map((file) => path.join(repo, file))
+      .filter((file) => fs.existsSync(file))
+      .map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   const unused = zhKeys.filter((key) => !used.has(key) && !corpus.includes(key));
   assert.deepEqual(unused, [], '词典里不应有页面未引用的键（避免堆积死文案）');
 });

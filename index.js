@@ -45,6 +45,8 @@ app.whenReady().then(() => {
   require('./main/disc').registerDiscIpc();
   // CD 抓轨：libcdio 读取音频 CD，FFmpeg 编码 FLAC 无损
   require('./main/cdrip').registerCdIpc();
+  // 字幕配音：本地 TTS 引擎逐条合成 + FFmpeg 组装音轨并混流
+  require('./main/dub').registerDubIpc();
   // 主题：先应用持久化设置（nativeTheme.themeSource），再注册切换 IPC
   const theme = require('./main/theme');
   theme.initTheme();

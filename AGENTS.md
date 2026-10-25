@@ -49,6 +49,13 @@ main/cdrip.js      CD 抓轨（音乐 CD → FLAC 无损）。注册 ffgui:cd-li
                     逐曲信息用 /ws/2/release/<id>?inc=recordings+artist-credits。元数据经
                     -metadata 传 Vorbis comment，专辑级字段 + 每轨覆盖（逐轨优先）。
                     三平台都要求内置 ffmpeg 带 --enable-libcdio（macOS 自建构建需显式开启）
+main/dub.js         字幕配音（dub）：spawn 本地 TTS 引擎 tts-server（bin/tts/，打包后在
+                    resources/tts/；环境变量 FFGUI_TTS_SERVER 可覆盖引擎路径供开发调试），
+                    起 127.0.0.1 上的 OpenAI 兼容 HTTP 服务并按字幕条目逐条合成语音，再由
+                    ffmpeg 按字幕原始时间轴拼装音频、与源视频混流输出。模型 GGUF 不随包
+                    分发：首次使用下载到 userData/tts-models/（官方地址与 hf-mirror 镜像可
+                    切）；引擎缺失或启动失败要给可读提示，不能静默产出无人声的结果；取消需
+                    kill 引擎子进程并清理临时音频与半成品
 main/theme.js       主题持久化（system/light/dark）到 userData/config.json 的 theme 字段，经
                     nativeTheme.themeSource 强制全局生效；IPC ffgui:theme-get / ffgui:theme-set
                     （校验合法性 → 持久化 → 改 themeSource → 广播 ffgui:theme-changed）
@@ -70,7 +77,7 @@ preload/preload.js  contextBridge 暴露 window.ffgui：platform、versions、ge
                     cdReleaseTracks、cdStart、cdCancel、onCdEvent。除主题、语言与光盘 /
                     CD 抓轨外与主进程 IPC 同名；新增 IPC 只在此暴露最小 API
 html/*.html         index（首页导航卡片 + 清除硬件信息缓存按钮）、convert、merge、clip、crop、
-                    record、disc、cdrip。CSP 统一为 default-src 'self'; style-src 'self';
+                    record、disc、cdrip、dub。CSP 统一为 default-src 'self'; style-src 'self';
                     script-src 'self'；clip/crop/record 额外放行 media-src 'self' blob: file:，
                     record 另放行 img-src 'self' data:（来源缩略图）
 html/js/index.js    首页视图切换与清缓存
@@ -87,8 +94,9 @@ html/js/theme.js    在 i18n.js 之后、各页面脚本之前加载：监听 ma
                     theme.tipSystem/tipLight/tipDark）
 locales/<lng>.json  五个语言的界面词典（zh-CN / zh-TW / en / ja / ko，zh-CN 为回退与源文案）。
                     嵌套 JSON，键用点路径，命名空间与页面同名：common、theme、lang、home、
-                    convert、merge、clip、crop、record、disc、main（主进程报错/对话框标题）。
-                    主进程与渲染层共用同一份文件；五语言键集合必须一致（scripts/i18n.test.cjs 校验）
+                    convert、merge、clip、crop、record、disc、cdrip、dub、main（主进程报错/
+                    对话框标题）。主进程与渲染层共用同一份文件；五语言键集合必须一致
+                    （scripts/i18n.test.cjs 校验）
 html/js/convert.js  转码页：候选格式/编码器清单硬编码，按主进程探测结果过滤后填下拉框；设备预设
                     按 DEVICE_PRESETS 表锁定并填兼容参数（切回自定义时恢复原设置，提示文案与
                     帧率标签随预设变化），纯音频格式自动隐藏视频表单项；提交前校验分辨率与帧率
@@ -120,6 +128,8 @@ html/js/cd.js        CD 抓轨页：cdListDrives 光驱下拉 → cdProbe 读 TO
                      字符串（DiscID、曲名、专辑名）一律 textContent 写入，绝不拼 HTML；渲染层
                      只传设备名与轨号，FFmpeg 命令行由主进程拼装。纠错/压缩档位与主进程白名单
                      一一对应（scripts/cd-ui.test.cjs 校验）
+html/js/dub.js      字幕配音页：载入字幕 → 逐条合成/试听 → 生成配音音轨并与视频混流；文案走
+                    locales 的 dub 命名空间，能力全部经 window.ffgui（不碰 Node 与文件系统）
 html/css/style.css  全部页面共用样式
 bin/                内置 ffmpeg。Windows 只带 ffmpeg.exe 单文件（约 140–210MB，ffprobe 未被
                     使用故不带），打包后到 resources/ 根目录（getFfmpegPath 优先
@@ -128,16 +138,29 @@ bin/                内置 ffmpeg。Windows 只带 ffmpeg.exe 单文件（约 14
                     brew 构建无 zimg 而 HDR 转 SDR 需要，故未内置时才回退 Homebrew），打包后到
                     resources/bin/；Linux 不携带，走系统 PATH。bin/disc/ 放 Rust 侧车二进制
                     （ffgui-disc.exe / ffgui-disc），经 extraResource 分发且不进 asar，打包后在
-                    resources/disc/。packagerConfig.ignore 中的 `/^\/bin($|\/)/` 规则不要删除，
-                    否则 asar 里会再塞一份
+                    resources/disc/。bin/tts/ 放 TTS 引擎 tts-server 及其同目录 ggml 动态库
+                    （由 native/qwentts.cpp 子模块编译，Windows 带 Vulkan 后端、macOS 纯
+                    CPU），同样经 extraResource 到 resources/tts/；Linux 不携带（回退 PATH）。
+                    packagerConfig.ignore 中的 `/^\/bin($|\/)/` 规则不要删除，否则 asar 里会
+                    再塞一份
 forge.config.js     压缩钩子、Fuses（RunAsNode: false、OnlyLoadAppFromAsar: true、
                     EnableEmbeddedAsarIntegrityValidation: true 等，不要关闭）、按构建平台条件
-                    配置的 extraResource；不能出现 null 值（proxify 会崩溃）
+                    配置的 extraResource（bin/tts/ 目录不存在时跳过，未初始化子模块也能打包）；
+                    不能出现 null 值（proxify 会崩溃）
 native/ffgui-disc/  Rust 光盘侧车（cargo crate，freemkv-engine v1.8.4，[patch.crates-io] 固定
                     上游 git tag）：ISO / 已解密目录 probe + 单标题无损 MKV rip；物理光驱代码
                     已接入但未真机验证，keydbPath 可选本地密钥库（在线密钥服务禁用）。产物
                     target/release/ffgui-disc(.exe)，打包时复制到 bin/disc/。freemkv-unlock 内含
                     非 MIT 厂商驱动微码，分发须随附上游 LICENSES/NOTICE
+native/qwentts.cpp/ git submodule：TTS 引擎 tts-server 源码（fork 自 ServeurpersoCom/qwentts.cpp，
+                    内部还套着 ggml 子模块，clone 必须 --recurse-submodules，CI 的 checkout
+                    用 submodules: recursive）。cmake 构建，Vulkan 后端开关是 ggml 的
+                    -DGGML_VULKAN=ON（Vulkan SDK 必需，ggml-vulkan 要求 glslc 与
+                    SPIRV-Headers）；产物 CMAKE_RUNTIME_OUTPUT_DIRECTORY = 构建根目录，即
+                    build/tts-server(.exe)（VS 生成器在 build/Release/），同目录还会生成
+                    ggml*.dll（ggml 默认动态库构建，必须与 exe 一起拷到 bin/tts/）。
+                    tts-server 对外是 OpenAI 兼容 HTTP 服务（--model / --codec / --host /
+                    --port / --alias / --device，另有 MODEL_PATH、CODEC_PATH 环境变量）
 makers/nsis.js      本地 NSIS maker 适配层，实际编译在 scripts/build-installer.cjs；必须 new
                     实例传入（Forge 凭 __isElectronForgeMaker 识别）
 assets/installer.nsi NSIS 脚本：MUI2 现代界面（欢迎/许可证[须同意]/目录/安装/完成页），LZMA
@@ -160,6 +183,12 @@ scripts/build-installer.cjs  编译安装包：调用 tools/nsisbi/makensis.exe�
                     （CI 即此用法）；先复制 installer.nsi 并补 UTF-8 BOM（makensis 把无 BOM
                     文件按 ANSI 解析）；defines.nsh 只注入产品名/版本/路径/版本信息（界面文案
                     已移到 installer.nsi 的 LangString）
+scripts/build-tts.cjs  编译 TTS 引擎并拷到 bin/tts/：node scripts/build-tts.cjs [--backend
+                    vulkan|cpu] [--arch x64|arm64] [--no-native] [--clean]。默认后端按平台
+                    选（Windows x64 = Vulkan，macOS / Windows arm64 / Linux = CPU），内部
+                    调用 cmake（-DGGML_VULKAN=ON|OFF，Windows arm64 另加 -A ARM64），无
+                    cmake 时给中文安装提示。CI 三个平台都用它；分发构建必须带 --no-native
+                    （宿主 CPU 优化会让产物在用户机器上报非法指令）
 tools/nsisbi/       NSISBI（解除 2GB 限制分支）免安装 amd64 版解压目标目录（v3.12.2）。二进制
                     不入库：构建时从 v0.1 Release 资源下载解压（curl.exe + System32 绝对路径的
                     bsdtar，PATH 里 Git 的 GNU tar 不认 zip）；目录内容被 .gitignore 忽略，
@@ -275,6 +304,9 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
 - `npm run package` — 打包到 `out/FFGui-win32-x64/`
 - `npm run make` — Windows 生成 NSIS 安装包 `FFGui-<版本>-<x64|arm64>-Setup.exe`（MUI2 + 许可证
   页须同意 + 快捷方式「狒狒格式工具箱」，每用户安装无需管理员）
+- `node scripts/build-tts.cjs [--backend vulkan|cpu] [--arch x64|arm64] [--no-native]` — 编译
+  TTS 引擎到 `bin/tts/`（可选：不编则打包时跳过 bin/tts/，字幕配音回退 PATH；需先
+  `git submodule update --init --recursive` 与 cmake，Vulkan 后端另需 Vulkan SDK）
 
 `npm test` 用 Node 内置测试运行器（`scripts/regression.test.cjs`），需 PATH 中有 ffmpeg/ffprobe
 或设置 `FFMPEG` / `FFPROBE`。没有 lint/format 配置。
@@ -285,20 +317,32 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
 
 - Windows x64：从 GyanD/codexffmpeg 最新 release 下载 full_build.7z（gyan.dev 直链在 CI 上会被
   反爬拦截），取 `ffmpeg.exe` 放入 `bin/`；dtolnay/rust-toolchain 构建 Rust 侧车并复制为
-  `bin/disc/ffgui-disc.exe`；`npm ci` + `npm run package`，再经 `scripts/build-installer.cjs`
-  生成 NSIS 安装包；`FFGui-windows-x64.7z` 与 `FFGui-<版本>-x64-Setup.exe` 上传 artifact；
-  Release 触发时同时上传到 Release Assets
+  `bin/disc/ffgui-disc.exe`；humbletim/install-vulkan-sdk 装 Vulkan SDK 后
+  `node scripts/build-tts.cjs --backend vulkan --no-native` 构建 TTS 引擎到 `bin/tts/`
+  （Vulkan 失败自动回退 `--backend cpu`，两者都失败只写警告并建空 `bin/tts/`，打包继续）；
+  `npm ci` + `npm run package`，再经 `scripts/build-installer.cjs` 生成 NSIS 安装包；
+  `FFGui-windows-x64.7z` 与 `FFGui-<版本>-x64-Setup.exe` 上传 artifact；Release 触发时同时
+  上传到 Release Assets
 - Windows arm64：从 tordona/ffmpeg-win-arm64 最新 release 下载 full-static-win-arm64.7z 取
   `ffmpeg.exe` 放入 `bin/`；安装 Rust ARM64 target、加载 MSVC ARM64 环境并准备 clang（ring 的
   ARM64 汇编需要），`cargo build --target aarch64-pc-windows-msvc` 产出 `bin/disc/ffgui-disc.exe`
-  并校验 PE 头机器类型（0xAA64）；x64 runner 无法执行 arm64 二进制；`npm run package
-  -- --arch=arm64` 交叉打包，产物 `FFGui-windows-arm64.7z` + `FFGui-<版本>-arm64-Setup.exe`
-  （NSIS 安装器架构无关，由 x64 makensis 交叉编译 arm64 内容）
+  并校验 PE 头机器类型（0xAA64）；x64 runner 无法执行 arm64 二进制；TTS 引擎只做
+  `--backend cpu --arch arm64`（Vulkan 交叉构建的工具链不稳，VS 生成器另加 `-A ARM64`）并同样
+  校验 0xAA64；`npm run package -- --arch=arm64` 交叉打包，产物 `FFGui-windows-arm64.7z` +
+  `FFGui-<版本>-arm64-Setup.exe`（NSIS 安装器架构无关，由 x64 makensis 交叉编译 arm64 内容）
 - macOS：下载 kisaragychihaya/ffmpeg_build_mac 最新 release 的 macos-arm64-static tar.gz，
   `bin/` 与 `lib/` 原样放入项目 `bin/` 并 `chmod +x`；cargo 构建侧车到 `bin/disc/ffgui-disc`；
-  打包后用 ditto 压缩为 `FFGui-macos-arm64.zip`；Release 触发时同样上传。
+  `node scripts/build-tts.cjs --backend cpu --no-native` 构建 tts-server 到 `bin/tts/`（Metal
+  由 ggml 在 APPLE 下默认开启，MoltenVK 暂不涉及）；打包后用 ditto 压缩为
+  `FFGui-macos-arm64.zip`；Release 触发时同样上传。
   **CD 抓轨要求该构建带 `--enable-libcdio`**（工作流 configure 里显式开启，未开则
   macOS 上读不出 CD 的 TOC）
+- TTS 引擎：源码是 submodule `native/qwentts.cpp`，三个 job 的 checkout 都必须是
+  `submodules: recursive`（qwentts.cpp 内部还套着 ggml 子模块，缺了 cmake 配置会直接失败）；
+  二进制不入库，每平台按上面的后端现编。Windows x64 的 CPU/Vulkan 构建与 `bin/tts/` 产物布局
+  已在本机实测（产物为 `build/Release/tts-server.exe` + 同目录 `ggml*.dll`，tts-server 需与
+  dll 同目录才能启动）；**仍未验证**的是 Windows arm64 的 `-A ARM64` 交叉、macOS 构建，以及
+  CI 里 Vulkan SDK action 的版本/输入名与 glslc 可用性
 - 仓库不提交 `bin/ffmpeg.exe` 等大文件，CI 每次现下；NSISBI 编译器同样不入库，构建时从 v0.1
   Release 资源下载解压
 
@@ -378,11 +422,24 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
   MusicBrainz 查询需联网；查询失败不阻塞抓轨（保留手动填写）。CD 抓轨与光盘抓取是两个
   独立入口：前者走 `main/cdrip.js`（FFmpeg libcdio，输出 FLAC），后者走
   `main/disc.js` + Rust 侧车（DVD/BD，输出 MKV/MP4），互不复用对方的单任务锁
+- 字幕配音（dub）限制：Windows x64 的 CPU 与 Vulkan 两种后端**已在本机实测编出并跑通
+  `--help`**（cmake 用 CLion 自带、VS 2022、Vulkan SDK 1.4.350.0），macOS 与 Windows arm64 的
+  构建仍未验证。Windows x64 走 Vulkan（AMD/Intel 显卡首选，NVIDIA 也能跑但不如 CUDA 快），
+  macOS 与 Windows arm64 **仅 CPU**（macOS 的 Metal 由 ggml 在 APPLE 下默认开启，MoltenVK
+  未做）；运行期还要求机器有可用的 Vulkan 驱动，否则 Vulkan 版起不来。ggml 默认按**动态库**
+  构建，`bin/tts/` 里必须同时有 `ggml*.dll`（缺了 tts-server 直接起不来）。模型是 talker +
+  tokenizer 两个 GGUF，不随包分发，首次使用下载到 `userData/tts-models/`（官方地址与
+  hf-mirror 镜像可切，下载失败要能重试且不产生半截文件）；引擎缺失或启动失败必须明确报错，
+  不能静默产出无人声音轨。引擎路径可用 `FFGUI_TTS_SERVER` 覆盖。体积：Vulkan 版约 41MB
+  （其中 `ggml-vulkan.dll` 38MB，含编译好的 shader），CPU 版约 2.5MB，安装包随之增大
 
 ## 测试方式
 
 `npm test` 跑 `scripts/regression.test.cjs` + `scripts/i18n.test.cjs` + `scripts/cdrip.test.cjs`
-+ `scripts/cd-ui.test.cjs`，生成独立临时媒体并自动清理；
++ `scripts/cd-ui.test.cjs`，生成独立临时媒体并自动清理；字幕配音（dub）的专项测试按同一命名
+约定是 `scripts/dub.test.cjs`（主进程：引擎路径解析、ffmpeg 命令组装、字幕条目解析与时间轴
+换算）与 `scripts/dub-ui.test.cjs`（页面纯逻辑，注入真实 `locales/zh-CN.json`），新增后要一并
+加进 `package.json` 的 `npm test`；
 侧车/页面专项用
 `node --test scripts/disc.test.cjs scripts/disc-sidecar.test.cjs scripts/disc-ui.test.cjs`，
 Rust 侧车 `cd native/ffgui-disc && cargo test --locked`。`disc-ui.test.cjs` 用 vm 抽取
@@ -396,7 +453,9 @@ Rust 侧车 `cd native/ffgui-disc && cargo test --locked`。`disc-ui.test.cjs` �
 `npm start` 后用 `test_media/` 示例文件走一遍转码（含拖拽、取消、进度），观察主进程 `[ffgui]` /
 `[ffmpeg]` 日志；录屏页验证录制（含系统声音/麦克风勾选、取消清理半成品、转 MP4）；
 光盘页验证 ISO/目录的探测、选轨、抓取与取消（需真实光盘环境）；
-CD 抓轨页验证光驱枚举、读 TOC、MusicBrainz 查询与填充、逐轨抓 FLAC 与取消（需真实音乐 CD）。
+CD 抓轨页验证光驱枚举、读 TOC、MusicBrainz 查询与填充、逐轨抓 FLAC 与取消（需真实音乐 CD）；
+字幕配音页验证引擎启动（无引擎时报错是否可读）、模型下载与镜像切换、逐条合成试听、混流输出
+与取消清理（需 `bin/tts/` 中有 tts-server 或设置 `FFGUI_TTS_SERVER`）。
 
 ## 音轨与输出规则（修复后）
 

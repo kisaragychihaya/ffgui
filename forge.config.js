@@ -70,6 +70,22 @@ function trimRuntime(buildPath) {
   }
 }
 
+// 额外资源清单。bin/tts/（TTS 引擎）可不构建：
+// electron-packager 对不存在的 extraResource 路径会直接报错，而未初始化
+// native/qwentts.cpp 子模块（或跳过 TTS 构建）时该目录不存在，故按存在与否动态加入，
+// 其余条目保持原样（不能出现 null 值，Forge 的 proxify 会崩溃）
+function extraResources() {
+  if (process.platform === 'linux') return [];
+  const list =
+    process.platform === 'darwin' ? ['./bin/', './bin/disc/'] : ['./bin/ffmpeg.exe', './bin/disc/'];
+  if (fs.existsSync(path.join(__dirname, 'bin', 'tts'))) {
+    list.push('./bin/tts/');
+  } else {
+    console.warn('[ffgui] 未找到 bin/tts/，打包产物不含 TTS 引擎（字幕配音将回退 PATH 查找）');
+  }
+  return list;
+}
+
 module.exports = {
   hooks: {
     // packageAfterCopy 在文件被复制到临时打包目录后触发，
@@ -93,12 +109,10 @@ module.exports = {
     // （main/ffmpeg.js 中会区分开发/打包路径）；Linux 使用系统 ffmpeg，不携带 bin/
     // Windows 只带 ffmpeg.exe：应用探测与处理全部走 ffmpeg，ffprobe 未被使用
     // （gyan full build 的 ffprobe 与 ffmpeg 一样 140MB+，不携带可省一半 bin 体积）
-    extraResource:
-      process.platform === 'linux'
-        ? []
-        : process.platform === 'darwin'
-          ? ['./bin/', './bin/disc/']
-          : ['./bin/ffmpeg.exe', './bin/disc/'],
+    // bin/disc/ 是 Rust 光盘侧车，bin/tts/ 是 TTS 引擎 tts-server（native/qwentts.cpp
+    // 子模块编译产物），两者都无法从 asar 内 spawn，同样按目录整体作为额外资源分发；
+    // Linux 两者都不携带（光盘侧车与 tts-server 均回退系统 PATH）
+    extraResource: extraResources(),
     ignore: [
       /^\/out($|\/)/,
       /^\/test_media($|\/)/,
@@ -129,9 +143,12 @@ module.exports = {
       /^\/assets\/installer\.nsi$/,
       /^\/_cdp_debug\.js$/,
       /^\/\.github($|\/)/,
-      // Rust 光盘侧车源码与构建产物由 extraResource 提供二进制，不进 asar
+      // Rust 光盘侧车与 TTS 引擎（native/qwentts.cpp）的源码与构建产物都不进 asar：
+      // 二进制由 extraResource 提供，源码是构建期依赖；/^\/bin($|\/)/ 已覆盖
+      // bin/disc、bin/tts，下面两条为显式兜底（与既有 bin/disc 保持一致）
       /^\/native($|\/)/,
       /^\/bin\/disc($|\/)/,
+      /^\/bin\/tts($|\/)/,
     ],
   },
   rebuildConfig: {},

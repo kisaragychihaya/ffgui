@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-i18n-title="dub.title">
+<head>
+  <meta charset="UTF-8" />
+  <!-- 本页不预览任何媒体（只显示字幕文本），故不放行 media-src / img-src -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self'; script-src 'self'" />
+  <title>字幕配音 - FFGui</title>
+  <link rel="icon" href="../assets/imgs/icon.ico" type="image/x-icon" />
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/dub.css" />
+</head>
+<body>
+  <main class="view dub-view">
+    <header class="feature-header">
+      <button id="btn-back" class="btn-back" type="button" data-i18n="common.backHome">← 返回首页</button>
+      <h2 data-i18n="dub.heading">字幕配音</h2>
+    </header>
+
+    <!-- 源文件：视频 + 字幕（均可拖入） -->
+    <section class="panel" id="source-panel">
+      <div class="panel-header">
+        <h3 data-i18n="dub.secSource">源文件</h3>
+        <div class="panel-actions">
+          <button id="btn-pick-video" class="btn" type="button" data-i18n="dub.btnPickVideo">选择视频</button>
+          <button id="btn-pick-subtitle" class="btn" type="button" data-i18n="dub.btnPickSubtitle">选择字幕</button>
+        </div>
+      </div>
+      <div id="source-drop" class="dub-drop">
+        <p data-i18n="dub.hintDrop">把视频和字幕文件拖到这里，或点上方按钮选择</p>
+        <p class="dub-drop-ext" data-i18n="dub.hintSubtitleExt">字幕支持 SRT / VTT / ASS / SSA 格式</p>
+      </div>
+      <div class="dub-files">
+        <div class="dub-file-row">
+          <span class="dub-file-label" data-i18n="dub.lblVideo">视频</span>
+          <span id="video-path" class="dub-file-value"></span>
+        </div>
+        <div class="dub-file-row">
+          <span class="dub-file-label" data-i18n="dub.lblSubtitle">字幕</span>
+          <span id="subtitle-path" class="dub-file-value"></span>
+        </div>
+      </div>
+      <div id="source-meta" class="dub-meta"></div>
+      <div id="cue-box" class="dub-cue-box hidden">
+        <p id="cue-title" class="dub-cue-title"></p>
+        <ul id="cue-list" class="dub-cue-list"></ul>
+      </div>
+    </section>
+
+    <!-- 配音引擎与模型 -->
+    <section class="panel" id="engine-panel">
+      <div class="panel-header">
+        <h3 data-i18n="dub.secEngine">配音引擎</h3>
+      </div>
+      <p id="engine-status" class="caps-info"></p>
+      <div id="engine-warning" class="dub-warning hidden"></div>
+      <div id="model-box" class="dub-model hidden">
+        <div class="form-grid">
+          <label class="form-item">
+            <span class="form-label" data-i18n="dub.lblVariant">模型变体</span>
+            <select id="sel-variant">
+              <option value="Q8_0" selected data-i18n="dub.variantQ8">Q8_0（推荐）</option>
+              <option value="Q4_K_M" data-i18n="dub.variantQ4">Q4_K_M（省显存）</option>
+            </select>
+          </label>
+          <label class="form-item">
+            <span class="form-label" data-i18n="dub.lblMirror">下载源</span>
+            <select id="sel-mirror">
+              <option value="official" data-i18n="dub.mirrorOfficial">官方 HuggingFace</option>
+              <option value="mirror" data-i18n="dub.mirrorMirror">国内镜像 hf-mirror.com</option>
+            </select>
+          </label>
+        </div>
+        <p class="caps-info" data-i18n="dub.hintVariantSize">模型体积：Q8_0 约 2.4 GB，Q4_K_M 约 1.5 GB（含分词器的合计下载量）。</p>
+        <div class="dub-download-actions">
+          <button id="btn-download" class="btn btn-primary" type="button" data-i18n="dub.btnDownload">下载模型</button>
+          <button id="btn-cancel-download" class="btn btn-danger hidden" type="button" data-i18n="dub.btnCancelDownload">取消下载</button>
+          <span id="download-status" class="status-text"></span>
+        </div>
+        <div id="download-track" class="progress-track hidden">
+          <div id="download-bar" class="progress-bar"></div>
+        </div>
+        <p class="caps-info" data-i18n="dub.hintDownload">模型只需下载一次，下载完成后保存在本机；中途取消可重新下载。</p>
+      </div>
+    </section>
+
+    <!-- 配音设置 -->
+    <section class="panel" id="options-panel">
+      <div class="panel-header"><h3 data-i18n="dub.secOptions">配音设置</h3></div>
+      <div class="form-grid">
+        <label class="form-item">
+          <span class="form-label" data-i18n="dub.lblLanguage">发音语言</span>
+          <select id="sel-language"></select>
+        </label>
+        <label class="form-item">
+          <span class="form-label" data-i18n="dub.lblBackend">推理后端</span>
+          <select id="sel-backend">
+            <option value="auto" data-i18n="dub.backendAuto">自动（优先 Vulkan）</option>
+            <option value="vulkan" data-i18n="dub.backendVulkan">Vulkan（GPU 加速）</option>
+            <option value="cpu" data-i18n="dub.backendCpu">CPU（较慢）</option>
+          </select>
+        </label>
+        <label class="form-item">
+          <span class="form-label" data-i18n="dub.lblContainer">输出容器</span>
+          <select id="sel-container">
+            <option value="same" data-i18n="dub.containerSame">与原片相同</option>
+            <option value="mp4" data-i18n="dub.containerMp4">MP4</option>
+            <option value="mkv" data-i18n="dub.containerMkv">MKV</option>
+          </select>
+        </label>
+      </div>
+      <p class="caps-info" data-i18n="dub.hintOptions">合成出的配音会作为新的音轨混入视频，原音轨保留，可在播放器中切换。</p>
+    </section>
+
+    <!-- 进度与操作 -->
+    <section class="panel" id="action-panel">
+      <div class="convert-actions">
+        <button id="btn-start" class="btn btn-primary" type="button" data-i18n="dub.btnStart" disabled>开始配音</button>
+        <button id="btn-cancel" class="btn btn-danger hidden" type="button" data-i18n="common.cancel">取消</button>
+        <span id="status-text" class="status-text"></span>
+      </div>
+      <p id="start-hint" class="caps-info"></p>
+      <div class="progress-track">
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
+      <p id="output-line" class="dub-output hidden"></p>
+      <div id="log-area" class="log-area hidden"></div>
+    </section>
+  </main>
+
+  <script src="js/i18n.js"></script>
+  <script src="js/theme.js"></script>
+  <script src="js/dub.js"></script>
+</body>
+</html>

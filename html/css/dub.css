@@ -1,0 +1,184 @@
+/* ---------- 字幕配音页 ---------- */
+
+.dub-view {
+  max-width: 900px;
+}
+
+/* 拖放区（与截取页的虚线框风格一致） */
+.dub-drop {
+  padding: 22px 0;
+  margin-bottom: 14px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+
+#source-panel.drag-over {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-hover);
+}
+
+#source-panel.drag-over .dub-drop {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.dub-drop-ext {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* 已选文件（只显示文件名，完整路径放在 title 上） */
+.dub-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.dub-file-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.dub-file-label {
+  flex-shrink: 0;
+  min-width: 40px;
+  color: var(--text-secondary);
+}
+
+.dub-file-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.dub-file-value.empty {
+  color: var(--text-secondary);
+}
+
+/* 字幕统计与预览 */
+.dub-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.dub-meta-tag {
+  padding: 2px 10px;
+  border-radius: 6px;
+  background: var(--hover-bg);
+  color: var(--text-secondary);
+}
+
+.dub-cue-box {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.dub-cue-title {
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dub-cue-list {
+  list-style: none;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.dub-cue-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.dub-cue-item:last-child {
+  border-bottom: none;
+}
+
+.dub-cue-time {
+  flex-shrink: 0;
+  min-width: 44px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.dub-cue-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+/* 引擎区：警告条 / 模型下载 */
+.dub-warning {
+  margin-top: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--danger);
+  background: var(--error-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.dub-model {
+  margin-top: 12px;
+}
+
+.dub-download-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.dub-download-actions .status-text {
+  min-width: 0;
+  flex: 1;
+}
+
+#download-track {
+  margin-top: 10px;
+}
+
+/* 输出路径 */
+.dub-output {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+/* 进度条与上方提示留出呼吸距离 */
+.dub-view .progress-track {
+  margin-top: 12px;
+}
+
+/* 日志逐行渲染：错误行单独着色（文本仍走 textContent） */
+.dub-log-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.dub-log-line.error {
+  color: var(--danger);
+}

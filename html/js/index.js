@@ -48,6 +48,10 @@
       window.location.href = 'cdrip.html';
       return;
     }
+    if (feature === 'dub') {
+      window.location.href = 'dub.html';
+      return;
+    }
     if (!FEATURE_KEYS[feature]) return;
     currentFeature = feature;
     renderFeatureName();

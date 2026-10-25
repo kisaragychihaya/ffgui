@@ -83,6 +83,26 @@ contextBridge.exposeInMainWorld('ffgui', {
     return () => ipcRenderer.removeListener('ffgui:cd-event', listener);
   },
 
+  // 字幕配音：视频 + 字幕文本合成语音作为新音轨混入视频
+  // 状态含引擎（是否安装/运行）与模型（变体、已下载文件）；缺模型时经 dubDownloadModel 下载
+  dubStatus: () => ipcRenderer.invoke('ffgui:dub-status'),
+  // 引擎支持的发音语言（id + 词典键，渲染层用 t(dictKey) 显示）
+  dubLanguages: () => ipcRenderer.invoke('ffgui:dub-languages'),
+  // variant: 'Q4_K_M' | 'Q8_0'；mirror: 'official' | 'mirror'
+  // 主进程按单个 payload 对象解构 { variant, mirror }
+  dubDownloadModel: (variant, mirror) => ipcRenderer.invoke('ffgui:dub-download', { variant, mirror }),
+  dubCancelDownload: () => ipcRenderer.invoke('ffgui:dub-cancel-download'),
+  dubPickVideo: () => ipcRenderer.invoke('ffgui:dub-pick-video'),
+  // 解析字幕为台词（cues: index/startMs/endMs/text，durationMs）
+  dubParseSubtitle: (file) => ipcRenderer.invoke('ffgui:dub-parse-subtitle', file),
+  dubStart: (job) => ipcRenderer.invoke('ffgui:dub-start', job),
+  dubCancel: (jobId) => ipcRenderer.invoke('ffgui:dub-cancel', jobId),
+  onDubEvent: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('ffgui:dub-event', listener);
+    return () => ipcRenderer.removeListener('ffgui:dub-event', listener);
+  },
+
   // 屏幕录制（渲染进程 getDisplayMedia + MediaRecorder 采集编码，分块写入主进程）  recordPickOutput: () => ipcRenderer.invoke('ffgui:recordPickOutput'),
   // 开始写盘：主进程显式创建输出文件流（同路径在录则报错，杜绝截断文件）
   recordStart: (targetPath) => ipcRenderer.invoke('ffgui:recordStart', targetPath),

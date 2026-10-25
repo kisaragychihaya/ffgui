@@ -17,6 +17,10 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          # native/qwentts.cpp（TTS 引擎）内部还套着 ggml 子模块，必须递归检出，
+          # 否则 scripts/build-tts.cjs 的 cmake 配置会因缺 ggml/ 直接失败
+          submodules: recursive
 
       - name: 安装 Node.js
         uses: actions/setup-node@v4
@@ -32,6 +36,38 @@ jobs:
           cargo build --locked --release --manifest-path native/ffgui-disc/Cargo.toml
           New-Item -ItemType Directory -Force bin/disc | Out-Null
           Copy-Item native/ffgui-disc/target/release/ffgui-disc.exe bin/disc/ffgui-disc.exe
+
+      # Vulkan SDK 是 Vulkan 后端的硬前置：ggml 的 ggml-vulkan 目标要求 glslc 与
+      # SPIRV-Headers，并通过 VULKAN_SDK 环境变量定位（该 action 会写入 GITHUB_ENV）。
+      # 未验证：action 版本与输入名以此处写法为准，若上游改名需同步调整
+      - name: 安装 Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.3.290.0
+          cache: true
+
+      # TTS 引擎（字幕配音）：Vulkan 为主力后端，构建失败时回退 CPU 版并继续打包；
+      # 两者都失败只写警告并建空 bin/tts/，不阻断打包（字幕配音在运行时回退 PATH 查找）
+      - name: 构建 TTS 引擎 tts-server
+        shell: pwsh
+        run: |
+          # --no-native：runner 的 CPU 可能带 AVX512 等扩展，-march=native 会让产物
+          # 在用户机器上报非法指令，分发用构建必须关掉宿主优化
+          node scripts/build-tts.cjs --backend vulkan --no-native
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning 'Vulkan 版 tts-server 构建失败，回退 CPU 后端'
+            node scripts/build-tts.cjs --backend cpu --no-native --clean
+          }
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning 'CPU 版 tts-server 也构建失败，本次打包不含 TTS 引擎（字幕配音回退 PATH 查找）'
+            New-Item -ItemType Directory -Force bin/tts | Out-Null
+          }
+          if (Test-Path bin/tts/tts-server.exe) {
+            Get-Item bin/tts/tts-server.exe | Select-Object FullName, Length
+          }
+          # GitHub 的 pwsh 包装会在脚本末尾按 $LASTEXITCODE 退出，这里显式归零，
+          # 否则"构建失败但继续打包"会被当成步骤失败（真正的错误已由 Write-Warning 记录）
+          exit 0
 
       - name: 下载 ffmpeg 并放入 bin/
         shell: pwsh
@@ -134,6 +170,10 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          # native/qwentts.cpp（TTS 引擎）内部还套着 ggml 子模块，必须递归检出，
+          # 否则 scripts/build-tts.cjs 的 cmake 配置会因缺 ggml/ 直接失败
+          submodules: recursive
 
       - name: 安装 Node.js
         uses: actions/setup-node@v4
@@ -192,6 +232,28 @@ jobs:
           $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
           if ($machine -ne 0xAA64) { throw ('bin/disc/ffgui-disc.exe 不是 ARM64 二进制 (machine=0x{0:X4})' -f $machine) }
           Write-Host 'ffgui-disc.exe 机器类型校验通过：ARM64'
+
+      # ARM64 只做 CPU 后端：Vulkan 交叉构建的工具链（glslc/SPIRV-Headers + arm64 链接）不稳。
+      # 未验证：-A ARM64 依赖 runner 装好 MSVC ARM64 工具集（现有 cargo/ffmpeg 步骤已依赖它）。
+      # 构建失败不阻断打包，但建出空 bin/tts/（避免 extraResource 指向不存在的路径）
+      - name: 构建 ARM64 TTS 引擎 tts-server（仅 CPU）
+        shell: pwsh
+        run: |
+          node scripts/build-tts.cjs --backend cpu --arch arm64 --no-native
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning 'ARM64 版 tts-server 构建失败，本次打包不含 TTS 引擎（字幕配音回退 PATH 查找）'
+            New-Item -ItemType Directory -Force bin/tts | Out-Null
+          }
+          if (Test-Path bin/tts/tts-server.exe) {
+            # runner 是 x64，无法执行 arm64 二进制，改为校验 PE 头机器类型（0xAA64 = ARM64）
+            $bytes = [System.IO.File]::ReadAllBytes("$PWD\bin\tts\tts-server.exe")
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne 0xAA64) { throw ('bin/tts/tts-server.exe 不是 ARM64 二进制 (machine=0x{0:X4})' -f $machine) }
+            Write-Host 'tts-server.exe 机器类型校验通过：ARM64'
+          }
+          # 同 x64：构建失败不阻断打包，显式归零 $LASTEXITCODE（真正的错误已记录为警告）
+          exit 0
 
       - name: 下载 ARM64 版 ffmpeg 并放入 bin/
         shell: pwsh
@@ -262,6 +324,10 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          # native/qwentts.cpp（TTS 引擎）内部还套着 ggml 子模块，必须递归检出，
+          # 否则 scripts/build-tts.cjs 的 cmake 配置会因缺 ggml/ 直接失败
+          submodules: recursive
 
       - name: 安装 Node.js
         uses: actions/setup-node@v4
@@ -305,6 +371,17 @@ jobs:
           rm -rf ffmac ffmac.tar.gz
           chmod +x bin/bin/ffmpeg
           ./bin/bin/ffmpeg -version | head -1
+
+      # macOS 只做 CPU 后端（Metal 由 ggml 在 APPLE 下默认开启，Vulkan/MoltenVK 暂不涉及）。
+      # cmake 在 runner 上已预装；构建失败不阻断打包，但要建出 bin/tts/
+      - name: 构建 TTS 引擎 tts-server（仅 CPU）
+        run: |
+          set -e
+          if ! node scripts/build-tts.cjs --backend cpu --no-native; then
+            echo '警告：tts-server 构建失败，本次打包不含 TTS 引擎（字幕配音回退 PATH 查找）'
+            mkdir -p bin/tts
+          fi
+          ls -l bin/tts/
 
       - name: 安装依赖
         run: npm ci

@@ -1370,4 +1370,12 @@ function registerIpc() {
   });
 }
 
-module.exports = { registerIpc, getCapabilities, runSingleFileConversion, cancelCurrentTask };
+// getFfmpegPath 一并导出：main/cdrip.js 与 main/dub.js 都要自行 spawn ffmpeg
+// （修复：此前只导出上面四个，require 侧拿到 undefined，抓轨/配音会 spawn 失败）
+module.exports = {
+  registerIpc,
+  getCapabilities,
+  runSingleFileConversion,
+  cancelCurrentTask,
+  getFfmpegPath,
+};

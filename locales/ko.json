@@ -690,6 +690,9 @@
       "errDuration": "더빙 오디오 트랙의 길이가 올바르지 않습니다",
       "errOutput": "출력 파일이 올바르지 않습니다",
       "errAudioInvalid": "더빙 엔진이 반환한 오디오가 올바르지 않습니다",
+      "errAudioEmpty": "더빙 엔진이 반환한 오디오가 비어 있습니다(샘플 없음)",
+      "errSilentTrack": "더빙 음성 트랙이 전부 무음이라 중단했습니다(무음 영상은 출력하지 않습니다)",
+      "errOutputNoDubTrack": "출력 파일의 음성 트랙 수가 맞지 않습니다(예상 {{expected}}개, 실제 {{actual}}개)라 더빙이 들어가지 않았습니다",
       "errEnginePort": "더빙 엔진이 수신 포트를 반환하지 않았습니다",
       "errEngineSpawn": "더빙 엔진을 시작할 수 없습니다: {{reason}}",
       "errEngineStart": "더빙 엔진 시작 실패",
@@ -872,6 +875,7 @@
     "downloadError": "모델 다운로드 실패: {{error}}",
     "secOptions": "더빙 설정",
     "lblLanguage": "발음 언어",
+    "lblSpeaker": "화자",
     "lblBackend": "추론 백엔드",
     "backendAuto": "자동(Vulkan 우선)",
     "backendVulkan": "Vulkan(GPU 가속)",
@@ -880,6 +884,7 @@
     "containerSame": "원본과 동일",
     "containerMp4": "MP4",
     "containerMkv": "MKV",
+    "hintSpeaker": "화자는 더빙 음색을 결정합니다. 합성에는 고정된 난수 시드를 사용하므로 같은 자막은 매번 같은 결과가 나옵니다. 엔진이 준비되고 모델 다운로드가 끝나면 선택할 수 있습니다.",
     "hintOptions": "합성된 음성은 새 오디오 트랙으로 영상에 추가됩니다. 원래 오디오 트랙은 유지되며 플레이어에서 전환할 수 있습니다.",
     "btnStart": "더빙 시작",
     "hintRunning": "작업 진행 중: 파일이나 옵션 변경, 페이지 이동이 차단됩니다.",
@@ -935,6 +940,7 @@
       "errBackend": "추론 백엔드가 올바르지 않습니다",
       "errContainer": "출력 컨테이너가 올바르지 않습니다",
       "errVariant": "모델 변형이 올바르지 않습니다",
+      "errSpeaker": "화자가 올바르지 않습니다",
       "errNoCues": "자막 파일에 사용할 수 있는 대사가 없습니다"
     },
     "lang": {

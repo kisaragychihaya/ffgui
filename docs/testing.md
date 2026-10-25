@@ -8,7 +8,13 @@
 + `scripts/cd-ui.test.cjs`，生成独立临时媒体并自动清理；字幕配音（dub）的专项测试按同一命名
 约定是 `scripts/dub.test.cjs`（主进程：引擎路径解析、ffmpeg 命令组装、字幕条目解析与时间轴
 换算、模型下载的 https/aria2 两条路径与内置 aria2c 路径解析——aria2 用注入的假 spawn，
-默认注入 `aria2: false` 避免真探测 PATH）；dub 页的纯逻辑 UI 测试文件
+默认注入 `aria2: false` 避免真探测 PATH；请求体断言 voice = 所选说话人、seed 固定 0，
+DEFAULT_SPEAKERS 十项与 normalizeSpeaker 的归一（大小写不敏感、非字符串/白名单外回默认
+Vivian，服务层再验一次非法说话人不报错照常配音）；配音成功链路上还覆盖三条防静默产出的自检：空 data
+段的 WAV 在第 N 条就报 FFGUI_DUB_SYNTH、组装音轨全静音报 FFGUI_DUB_SILENT（假 ffmpeg 按
+`volumedetect` 参数分支回 -91.0 dB）、成品音轨数不对报 FFGUI_DUB_MUX 并删成品。mock 用
+`producedOutputs` 记住本任务写出的文件来区分「源探测」与「混流后回探」，判别混流调用要看
+2 个 -i 且无 -filter_complex——组装命令里也有 -map（[dubout]），不能拿 -map 判）；dub 页的纯逻辑 UI 测试文件
 （`scripts/dub-ui.test.cjs`，仿 `cd-ui.test.cjs` 注入真实 `locales/zh-CN.json`）尚未建立，
 新增后要一并加进 `package.json` 的 `npm test`；
 侧车/页面专项用
@@ -78,7 +84,12 @@ aria2c 时，应自动回退内置 https 下载）、
   macOS 与 Windows arm64 **仅 CPU**（macOS 的 Metal 由 ggml 在 APPLE 下默认开启，MoltenVK
   未做）；运行期还要求机器有可用的 Vulkan 驱动，否则 Vulkan 版起不来。ggml 默认按**动态库**
   构建，`bin/tts/` 里必须同时有 `ggml*.dll`（缺了 tts-server 直接起不来）。模型是 talker +
-  tokenizer 两个 GGUF，不随包分发，首次使用下载到 `userData/tts-models/`。下载源可选官方
+  tokenizer 两个 GGUF，不随包分发，首次使用下载到 `userData/tts-models/`。talker 固定用
+  **customvoice** 变体（`qwen-talker-1.7b-customvoice-<variant>.gguf`）：base 变体没有
+  speaker_names、逐条字幕音色随机，已从代码里移除，**旧版本下过的 base 文件不会被识别**
+  （文件名不同），升级后要重新下载一次。说话人取 `DEFAULT_SPEAKERS` 十项（与 GGUF 的
+  `qwen3-tts.codec.speaker_names` 一致），合成请求逐条带 `voice` 与 `seed = 0`；说话人不影响
+  识别/断句，只换音色。下载源可选官方
   HuggingFace、hf-mirror.com、ModelScope（页面「下载源」下拉，值 official / hfmirror /
   modelscope）：ModelScope 用的是第三方搬运仓库 `leletxh/Qwen3-TTS-GGUF`，只有 Q8_0 的两个
   文件，**选它并下载 Q4_K_M 时两个文件都会自动回退 hf-mirror**（控制台有 `[ffgui]` 日志）。
@@ -92,5 +103,7 @@ aria2c 时，应自动回退内置 https 下载）、
   一次下载内不切换实现。**macOS 的 aria2c 由 CI 现编**（官方没有 darwin 构建），编译失败时
   打包继续但没有内置二进制；WOA 的内置二进制是 x64，靠系统模拟运行。
   引擎缺失或启动失败必须明确报错，
-  不能静默产出无人声音轨。引擎路径可用 `FFGUI_TTS_SERVER` 覆盖。体积：Vulkan 版约 41MB
+  不能静默产出无人声音轨。引擎路径可用 `FFGUI_TTS_SERVER` 覆盖。输出策略是「源音轨全保留 +
+  追加一条配音轨」，并把配音设为默认音轨（源音轨的 default 摘掉）；**没有「替换原声」开关**，
+  想只听配音需在播放器里切轨（或后续再加选项）。体积：Vulkan 版约 41MB
   （其中 `ggml-vulkan.dll` 38MB，含编译好的 shader），CPU 版约 2.5MB，安装包随之增大

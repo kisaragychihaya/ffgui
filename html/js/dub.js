@@ -1,7 +1,7 @@
 // 字幕配音页逻辑
 // 流程：选视频 + 选字幕（dubParseSubtitle 解析成台词）→ 检查引擎与模型
-// （dubStatus；缺模型时经 dubDownloadModel 下载）→ 选发音语言 / 推理后端 / 输出容器
-// → dubStart 合成配音并混入新音轨，进度与日志经 onDubEvent 推送。
+// （dubStatus；缺模型时经 dubDownloadModel 下载）→ 选发音语言 / 说话人 / 推理后端 /
+// 输出容器 → dubStart 合成配音并混入新音轨，进度与日志经 onDubEvent 推送。
 // 安全约束：字幕文本、文件路径这些来路不可信的字符串一律用 textContent 写入，
 // 绝不拼接 HTML；渲染层只传路径与选项这类数据，命令行与引擎调用由主进程负责。
 (function () {
@@ -20,6 +20,15 @@
   const MIRRORS = ['official', 'hfmirror', 'modelscope'];
   const BACKENDS = ['auto', 'vulkan', 'cpu'];
   const CONTAINERS = ['same', 'mp4', 'mkv'];
+
+  // 说话人：customvoice 模型的固定音色，与 main/dub.js 的 DEFAULT_SPEAKERS 一一对应。
+  // 显示名就是值（上游说话人本就是英文名，不翻译）；正常由 status().speakers 下发，
+  // 接口不可用时用这份兜底。主进程对白名单外的值一律回默认，这里不会让任务失败。
+  const SPEAKERS = [
+    'Vivian', 'Alex', 'Ann', 'Davis', 'Jackson',
+    'Jeff', 'Rachel', 'Ethan', 'Quinn', 'Charlotte',
+  ];
+  const DEFAULT_SPEAKER = 'Vivian';
 
   // 引擎支持的语言：正常由 dubLanguages() 下发（id 为小写，含 auto），接口不可用时
   // 用这份兜底。语言名取 dub.lang.<id>，词典缺词时 t() 回退键名，不阻塞使用。
@@ -124,16 +133,20 @@
     return cues;
   }
 
-  // 提交前的整体校验：返回当前语言的错误列表，空数组表示可以开始
-  function validateDubJob(job) {
+  // 提交前的整体校验：返回当前语言的错误列表，空数组表示可以开始。
+  // speakers 可选：页面把 status().speakers 传进来，避免主进程白名单变了之后
+  // 渲染层的兜底常量过期导致「选得到的值被判非法」
+  function validateDubJob(job, speakers) {
     if (!job || typeof job !== 'object') return [t('dub.logic.errJob')];
     const errors = [];
+    const allowedSpeakers = Array.isArray(speakers) && speakers.length > 0 ? speakers : SPEAKERS;
     if (typeof job.video !== 'string' || job.video === '') errors.push(t('dub.logic.errVideo'));
     if (typeof job.subtitle !== 'string' || job.subtitle === '') errors.push(t('dub.logic.errSubtitle'));
     if (typeof job.language !== 'string' || job.language === '') errors.push(t('dub.logic.errLanguage'));
     if (!BACKENDS.includes(job.backend)) errors.push(t('dub.logic.errBackend'));
     if (!CONTAINERS.includes(job.container)) errors.push(t('dub.logic.errContainer'));
     if (!VARIANTS.includes(job.variant)) errors.push(t('dub.logic.errVariant'));
+    if (!allowedSpeakers.includes(job.speaker)) errors.push(t('dub.logic.errSpeaker'));
     return errors;
   }
 
@@ -144,6 +157,7 @@
       video: options.video,
       subtitle: options.subtitle,
       language: options.language,
+      speaker: options.speaker,
       backend: options.backend,
       container: options.container,
       variant: options.variant,
@@ -186,6 +200,7 @@
     downloadTrack: $('download-track'),
     downloadBar: $('download-bar'),
     language: $('sel-language'),
+    speaker: $('sel-speaker'),
     backend: $('sel-backend'),
     container: $('sel-container'),
     start: $('btn-start'),
@@ -436,6 +451,8 @@
     } finally {
       state.statusLoaded = true;
       renderEngine();
+      // 说话人列表随状态下发，状态到了（或变了）再重绘一次下拉
+      renderSpeakers();
       updateButtons();
     }
   }
@@ -553,9 +570,38 @@
     }
   }
 
+  // 说话人列表：优先用主进程 status().speakers（与 main/dub.js 同一份白名单），
+  // 拿不到时用本文件的兜底常量
+  function speakerList() {
+    const fromStatus = state.status && Array.isArray(state.status.speakers) ? state.status.speakers : null;
+    const list = (fromStatus || []).map((name) => String(name || '')).filter((name) => name !== '');
+    return list.length > 0 ? list : SPEAKERS;
+  }
+
+  // 显示名即值（英文名不翻译），重绘时尽量保住用户已选的说话人
+  function renderSpeakers() {
+    const list = speakerList();
+    const current = els.speaker.value;
+    els.speaker.textContent = '';
+    for (const name of list) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      els.speaker.appendChild(opt);
+    }
+    if (current && list.includes(current)) els.speaker.value = current;
+    else els.speaker.value = list.includes(DEFAULT_SPEAKER) ? DEFAULT_SPEAKER : list[0];
+  }
+
   // ---------- 校验与按钮 ----------
   function currentLanguage() {
     return els.language.value ? String(els.language.value) : '';
+  }
+
+  function currentSpeaker() {
+    const value = String(els.speaker.value || '');
+    const list = speakerList();
+    return list.includes(value) ? value : (list[0] || DEFAULT_SPEAKER);
   }
 
   function currentVariant() {
@@ -574,6 +620,7 @@
       video: state.video,
       subtitle: state.subtitle,
       language: currentLanguage(),
+      speaker: currentSpeaker(),
       backend: els.backend.value,
       container: els.container.value,
       variant: currentVariant(),
@@ -581,7 +628,7 @@
   }
 
   function jobErrors() {
-    const errors = validateDubJob(currentJob());
+    const errors = validateDubJob(currentJob(), speakerList());
     if (state.subtitle && state.cues.length === 0 && !state.busy) {
       errors.unshift(t('dub.logic.errNoCues'));
     }
@@ -639,6 +686,9 @@
     els.variant.disabled = busy || downloading;
     els.mirror.disabled = busy || downloading;
     els.language.disabled = busy;
+    // 说话人由已下载的模型决定：引擎未就绪（没装引擎 / 模型还没下载完）时没有可用的
+    // 音色列表，先禁用；任务进行中也锁住，避免中途改动与实际合成不一致
+    els.speaker.disabled = busy || !engineReady();
     els.backend.disabled = busy;
     els.container.disabled = busy;
     els.download.disabled = busy || downloading || status.state !== 'no-model';
@@ -858,7 +908,7 @@
     log(t('dub.logCancelRequested'));
   });
 
-  for (const el of [els.language, els.backend, els.container, els.variant]) {
+  for (const el of [els.language, els.speaker, els.backend, els.container, els.variant]) {
     el.addEventListener('change', updateButtons);
   }
 
@@ -906,7 +956,8 @@
   });
 
   // 语言切换：重刷本页生成的所有动态文案（文件路径、引擎状态、下载进度、
-  // 语言名、状态行、输出路径）。已写入日志区的内容保持生成时语言。
+  // 语言名、说话人列表、状态行、输出路径）。已写入日志区的内容保持生成时语言。
+  // 说话人显示名是英文原文，重绘只为跟随 status 变化与选择状态。
   if (window.i18n && typeof window.i18n.onChange === 'function') {
     window.i18n.onChange(() => {
       renderFiles();
@@ -914,6 +965,7 @@
       renderEngine();
       renderDownload();
       renderLanguages();
+      renderSpeakers();
       renderStatus();
       renderOutput();
       updateButtons();
@@ -926,6 +978,7 @@
   }
   renderSource();
   renderDownload();
+  renderSpeakers();
   renderStatus();
   renderOutput();
   updateButtons();

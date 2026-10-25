@@ -690,6 +690,9 @@
       "errDuration": "Invalid duration for the dubbed audio track",
       "errOutput": "Invalid output file",
       "errAudioInvalid": "The dubbing engine returned invalid audio",
+      "errAudioEmpty": "The dubbing engine returned empty audio (no samples at all)",
+      "errSilentTrack": "The dubbed track is completely silent, so the job was stopped instead of writing a silent video",
+      "errOutputNoDubTrack": "The output has the wrong number of audio tracks (expected {{expected}}, got {{actual}}), so the dub was not muxed in",
       "errEnginePort": "The dubbing engine did not report a listening port",
       "errEngineSpawn": "Cannot start the dubbing engine: {{reason}}",
       "errEngineStart": "The dubbing engine failed to start",
@@ -872,6 +875,7 @@
     "downloadError": "Model download failed: {{error}}",
     "secOptions": "Dubbing settings",
     "lblLanguage": "Speaking language",
+    "lblSpeaker": "Speaker",
     "lblBackend": "Inference backend",
     "backendAuto": "Auto (prefer Vulkan)",
     "backendVulkan": "Vulkan (GPU accelerated)",
@@ -880,6 +884,7 @@
     "containerSame": "Same as source",
     "containerMp4": "MP4",
     "containerMkv": "MKV",
+    "hintSpeaker": "The speaker decides the dubbing voice; synthesis uses a fixed random seed, so the same subtitle gives the same result every time. Selectable once the engine is ready and the model is downloaded.",
     "hintOptions": "The synthesized voice is mixed into the video as an additional track; the original audio track is kept and can be switched in a player.",
     "btnStart": "Start dubbing",
     "hintRunning": "Task running: changing files or options and leaving the page are blocked.",
@@ -935,6 +940,7 @@
       "errBackend": "Invalid inference backend",
       "errContainer": "Invalid output container",
       "errVariant": "Invalid model variant",
+      "errSpeaker": "Invalid speaker",
       "errNoCues": "The subtitle file contains no usable lines"
     },
     "lang": {

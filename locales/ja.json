@@ -690,6 +690,9 @@
       "errDuration": "吹き替え音声トラックの長さが不正です",
       "errOutput": "出力ファイルが不正です",
       "errAudioInvalid": "吹き替えエンジンが返した音声が不正です",
+      "errAudioEmpty": "吹き替えエンジンが返した音声が空です（サンプルがありません）",
+      "errSilentTrack": "吹き替え音声トラックが完全に無音のため中止しました（無音の動画は出力しません）",
+      "errOutputNoDubTrack": "出力ファイルの音声トラック数が想定と違います（想定 {{expected}} 本、実際 {{actual}} 本）ため、吹き替えが入っていません",
       "errEnginePort": "吹き替えエンジンが待受ポートを返しませんでした",
       "errEngineSpawn": "吹き替えエンジンを起動できません：{{reason}}",
       "errEngineStart": "吹き替えエンジンの起動に失敗しました",
@@ -872,6 +875,7 @@
     "downloadError": "モデルのダウンロードに失敗しました：{{error}}",
     "secOptions": "吹き替え設定",
     "lblLanguage": "発話言語",
+    "lblSpeaker": "話者",
     "lblBackend": "推論バックエンド",
     "backendAuto": "自動（Vulkan 優先）",
     "backendVulkan": "Vulkan（GPU 加速）",
@@ -880,6 +884,7 @@
     "containerSame": "元ファイルと同じ",
     "containerMp4": "MP4",
     "containerMkv": "MKV",
+    "hintSpeaker": "話者は吹き替えの声質を決めます。合成には固定の乱数シードを使うため、同じ字幕なら毎回同じ結果になります。エンジンが準備でき、モデルのダウンロードが完了すると選択できます。",
     "hintOptions": "合成した音声は新しい音声トラックとして動画に追加されます。元の音声は保持され、プレーヤーで切り替えられます。",
     "btnStart": "吹き替えを開始",
     "hintRunning": "処理中です：ファイルやオプションの変更、ページからの移動はブロックされます。",
@@ -935,6 +940,7 @@
       "errBackend": "推論バックエンドが不正です",
       "errContainer": "出力コンテナが不正です",
       "errVariant": "モデル変種が不正です",
+      "errSpeaker": "話者が不正です",
       "errNoCues": "字幕ファイルに使用できる台詞がありません"
     },
     "lang": {

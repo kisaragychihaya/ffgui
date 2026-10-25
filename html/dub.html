@@ -94,6 +94,10 @@
           <select id="sel-language"></select>
         </label>
         <label class="form-item">
+          <span class="form-label" data-i18n="dub.lblSpeaker">说话人</span>
+          <select id="sel-speaker"></select>
+        </label>
+        <label class="form-item">
           <span class="form-label" data-i18n="dub.lblBackend">推理后端</span>
           <select id="sel-backend">
             <option value="auto" data-i18n="dub.backendAuto">自动（优先 Vulkan）</option>
@@ -110,6 +114,7 @@
           </select>
         </label>
       </div>
+      <p class="caps-info" data-i18n="dub.hintSpeaker">说话人决定配音音色；合成本身用固定的随机种子，同一份字幕每次结果一致。引擎就绪、模型下载完成后才能选择。</p>
       <p class="caps-info" data-i18n="dub.hintOptions">合成出的配音会作为新的音轨混入视频，原音轨保留，可在播放器中切换。</p>
     </section>
 

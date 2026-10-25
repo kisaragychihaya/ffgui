@@ -18,6 +18,10 @@ const { Readable } = require('node:stream');
 
 const repo = path.resolve(__dirname, '..');
 const dub = require(path.join(repo, 'main', 'dub.js'));
+// 主进程 i18n 的默认语言是回退语言 zh-CN（测试进程不调 init），文案断言取词典原文
+const ZH_DUB = JSON.parse(
+  fs.readFileSync(path.join(repo, 'locales', 'zh-CN.json'), 'utf8'),
+).main.dub;
 
 const tempRoots = [];
 const openServers = new Set();
@@ -284,6 +288,90 @@ test('混流：新音轨序号 = 源音频流数，MP4 字幕转 mov_text、MKV 
   assert.ok(!noSub.includes('-c:s'));
 });
 
+test('混流：配音轨设为默认音轨，源音轨全部摘掉 default（否则播放器放原声）', () => {
+  // 源 2 条音轨：两条都要摘 default，配音（a:2）成为唯一默认
+  const two = dub.buildDubMuxArgs({
+    video: '/v/a.mkv', audioWav: '/tmp/dub.wav', outPath: '/v/a_dub.mkv', sourceAudioCount: 2,
+  });
+  assert.equal(two[two.indexOf('-disposition:a:0') + 1], '0');
+  assert.equal(two[two.indexOf('-disposition:a:1') + 1], '0');
+  assert.equal(two[two.indexOf('-disposition:a:2') + 1], 'default');
+  assert.equal(two.filter((arg) => arg === '-disposition:a:2').length, 1, '配音只能声明一次');
+
+  // 源无音轨：配音是第 0 条，直接设默认且不该去摘自己的 default
+  const none = dub.buildDubMuxArgs({
+    video: '/v/a.mp4', audioWav: '/tmp/dub.wav', outPath: '/v/a_dub.mp4', sourceAudioCount: 0,
+  });
+  assert.equal(none[none.indexOf('-disposition:a:0') + 1], 'default');
+  assert.equal(none.filter((arg) => /^-disposition:a:\d+$/.test(arg)).length, 1);
+
+  // 默认音轨声明必须排在输出文件名之前（输出选项的位置敏感）
+  for (const args of [two, none]) {
+    const idx = args.findIndex((arg) => arg.startsWith('-disposition:'));
+    assert.ok(idx < args.length - 1, '文件名必须是最后一个参数');
+  }
+});
+
+// ---------- 引擎返回的 WAV 与音量校验 ----------
+
+test('WAV 校验：合法音频通过，空 data 段/非 RIFF/截断响应都判失败', () => {
+  const okWav = dub.inspectWavBuffer(wavBytes());
+  assert.equal(okWav.ok, true);
+  assert.equal(okWav.dataBytes, 16);
+  assert.equal(okWav.sampleRate, 24000);
+  assert.equal(okWav.channels, 1);
+
+  // 引擎 200 + 合法 RIFF 但没有任何采样：不能当成功，否则整条字幕静音落盘
+  const empty = dub.inspectWavBuffer(wavBytes(0));
+  assert.equal(empty.ok, false);
+  assert.equal(empty.reason, 'empty');
+
+  assert.equal(dub.inspectWavBuffer(Buffer.from('<html>error</html>')).reason, 'notRiff');
+  assert.equal(dub.inspectWavBuffer(Buffer.alloc(0)).reason, 'notRiff');
+  assert.equal(dub.inspectWavBuffer(null).reason, 'notRiff');
+  // 声明了 1000 字节 data 但实际只到 4 字节：按真实长度算，仍算有声但字节数不撒谎
+  const truncated = Buffer.concat([wavBytes(0).subarray(0, 44), Buffer.alloc(4)]);
+  truncated.writeUInt32LE(1000, 40);
+  const cut = dub.inspectWavBuffer(truncated);
+  assert.equal(cut.ok, true);
+  assert.equal(cut.dataBytes, 4);
+});
+
+test('WAV 校验：LIST 等附加块插在 fmt 与 data 之间也能正确取到 data', () => {
+  const base = wavBytes(8);
+  const fmtChunk = base.subarray(12, 36);
+  const listPayload = Buffer.from('INFOIART28', 'latin1');
+  const listHeader = Buffer.alloc(8);
+  listHeader.write('LIST', 0, 'latin1');
+  listHeader.writeUInt32LE(listPayload.length, 4);
+  const dataChunk = Buffer.alloc(8);
+  dataChunk.write('data', 0, 'latin1');
+  dataChunk.writeUInt32LE(8, 4);
+  const payload = Buffer.concat([fmtChunk, listHeader, listPayload, dataChunk, Buffer.alloc(8)]);
+  const riff = Buffer.alloc(12);
+  riff.write('RIFF', 0, 'latin1');
+  riff.writeUInt32LE(4 + payload.length, 4);
+  riff.write('WAVE', 8, 'latin1');
+  const info = dub.inspectWavBuffer(Buffer.concat([riff, payload]));
+  assert.equal(info.ok, true);
+  assert.equal(info.dataBytes, 8);
+  assert.equal(info.sampleRate, 24000);
+});
+
+test('音量解析：取 volumedetect 峰值，-inf 与全静音音频都判为静音', () => {
+  assert.equal(dub.parseMaxVolumeDb('[Parsed_volumedetect_0 @ 0x1] max_volume: -18.0 dB'), -18);
+  assert.equal(dub.parseMaxVolumeDb('mean_volume: -24.9 dB\nmax_volume: -3.2 dB'), -3.2);
+  // 16bit 绝对静音实测报 -91.0 dB，不是 -inf
+  assert.equal(dub.parseMaxVolumeDb('max_volume: -91.0 dB'), -91);
+  assert.equal(dub.parseMaxVolumeDb('max_volume: -inf dB'), -Infinity);
+  // 解析不出时返回 null，调用方放行
+  assert.equal(dub.parseMaxVolumeDb(''), null);
+  assert.equal(dub.parseMaxVolumeDb('n_samples: 0'), null);
+  assert.equal(dub.SILENT_MAX_DB, -60);
+  assert.ok(-91 <= dub.SILENT_MAX_DB);
+  assert.ok(-18 > dub.SILENT_MAX_DB);
+});
+
 test('语言到 BCP 47 的映射', () => {
   assert.equal(dub.languageToBcp47('chinese'), 'zh');
   assert.equal(dub.languageToBcp47('Chinese'), 'zh');
@@ -322,9 +410,10 @@ test('输出路径：撞名加序号，并避开输入文件', () => {
 
 // ---------- 模型与引擎路径 ----------
 
-test('模型下载地址：三个源各自的仓库路径', () => {
+test('模型下载地址：三个源各自的仓库路径（customvoice 模型）', () => {
   const talker = dub.talkerFileName('Q4_K_M');
-  assert.equal(talker, 'qwen-talker-1.7b-base-Q4_K_M.gguf');
+  // 用 customvoice 而非 base：base 没有固定说话人，音色随机
+  assert.equal(talker, 'qwen-talker-1.7b-customvoice-Q4_K_M.gguf');
   assert.equal(dub.tokenizerFileName('Q8_0'), 'qwen-tokenizer-12hz-Q8_0.gguf');
   assert.equal(
     dub.modelDownloadUrl(talker, 'official'),
@@ -509,13 +598,21 @@ test('语言清单：11 项（含 auto），dictKey 带 dub.lang. 前缀', () =>
 test('任务校验：白名单字段与错误码', () => {
   const ok = dub.validateDubJob({ id: 'job_1', video: '/v/a.mp4', subtitle: '/v/a.srt' });
   assert.deepEqual(ok, {
-    id: 'job_1', video: '/v/a.mp4', subtitle: '/v/a.srt', language: 'auto', backend: 'auto', container: 'same', variant: '',
+    id: 'job_1',
+    video: '/v/a.mp4',
+    subtitle: '/v/a.srt',
+    language: 'auto',
+    backend: 'auto',
+    container: 'same',
+    variant: '',
+    speaker: 'Vivian',
   });
   const full = dub.validateDubJob({
-    id: 'job_2', video: '/v/a.mp4', subtitle: '/v/a.srt', language: 'Chinese', backend: 'cpu', container: 'mkv', variant: 'q4_k_m',
+    id: 'job_2', video: '/v/a.mp4', subtitle: '/v/a.srt', language: 'Chinese', backend: 'cpu', container: 'mkv', variant: 'q4_k_m', speaker: 'Jackson',
   });
   assert.equal(full.language, 'chinese');
   assert.equal(full.variant, 'Q4_K_M');
+  assert.equal(full.speaker, 'Jackson');
   const bad = (job, code) => assert.throws(() => dub.validateDubJob(job), (err) => err.code === code);
   bad({ video: '/v/a.mp4', subtitle: '/v/a.srt' }, 'FFGUI_DUB_INVALID_JOB');
   bad({ id: '../evil', video: '/v/a.mp4', subtitle: '/v/a.srt' }, 'FFGUI_DUB_INVALID_JOB');
@@ -526,11 +623,33 @@ test('任务校验：白名单字段与错误码', () => {
   bad(null, 'FFGUI_DUB_INVALID_JOB');
 });
 
+test('说话人：十个固定名字、默认 Vivian，非法值回默认而不报错', () => {
+  assert.deepEqual(dub.DEFAULT_SPEAKERS, [
+    'Vivian', 'Alex', 'Ann', 'Davis', 'Jackson',
+    'Jeff', 'Rachel', 'Ethan', 'Quinn', 'Charlotte',
+  ]);
+  assert.equal(dub.DEFAULT_SPEAKER, 'Vivian');
+  const job = (speaker) => dub.validateDubJob({
+    id: 'x', video: '/v/a.mp4', subtitle: '/v/a.srt', speaker,
+  }).speaker;
+  // 合法值原样透传，大小写不敏感（按白名单的规范写法归一）
+  assert.equal(job('Charlotte'), 'Charlotte');
+  assert.equal(job('alex'), 'Alex');
+  assert.equal(job(' RACHEL '), 'Rachel');
+  // 白名单外 / 空 / 非字符串一律回默认，不让整条配音任务失败
+  for (const value of ['Nobody', '', '   ', null, undefined, 42, {}, ['Alex']]) {
+    assert.equal(job(value), 'Vivian', `speaker=${JSON.stringify(value)} 应回默认`);
+  }
+  assert.equal(dub.normalizeSpeaker('quinn'), 'Quinn');
+  assert.equal(dub.normalizeSpeaker('unknown'), 'Vivian');
+});
+
 // ---------- 服务层（vm 加载 + 假引擎 + mock spawn） ----------
 
-// 最小合法 WAV：44 字节 RIFF 头 + 8 个采样（16bit 单声道 24kHz）
-function wavBytes() {
-  const data = Buffer.alloc(16);
+// 最小合法 WAV：44 字节 RIFF 头 + 8 个采样（16bit 单声道 24kHz）。
+// dataBytes = 0 用来模拟"引擎返回 200 + 合法 RIFF 但没有任何采样"
+function wavBytes(dataBytes = 16) {
+  const data = Buffer.alloc(dataBytes);
   const header = Buffer.alloc(44);
   header.write('RIFF', 0, 'latin1');
   header.writeUInt32LE(36 + data.length, 4);
@@ -556,6 +675,36 @@ const PROBE_STDERR = [
   '    Stream #0:0[0x1](und): Video: h264 (High), yuv420p, 1280x720',
   '    Stream #0:1[0x2](und): Audio: aac (LC), 48000 Hz, stereo, fltp',
 ].join('\n');
+
+// 成品回探：源 1 条音轨 + 配音 1 条 = 2 条音频流（混流自检的期望值）
+const OUTPUT_PROBE_STDERR = [
+  "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'a_dub.mp4':",
+  '  Duration: 00:01:10.50, start: 0.000000, bitrate: 1000 kb/s',
+  '    Stream #0:0[0x1](und): Video: h264 (High), yuv420p, 1280x720',
+  '    Stream #0:1[0x2](und): Audio: aac (LC), 48000 Hz, stereo, fltp (default)',
+  '    Stream #0:2[0x3](zho): Audio: aac (LC), 48000 Hz, stereo, fltp',
+].join('\n');
+
+// volumedetect 的 stderr（真实 ffmpeg 的输出形态）；全静音实测报 -91.0 dB
+const LEVEL_STDERR = [
+  '[Parsed_volumedetect_0 @ 0x1] n_samples: 1152000',
+  '[Parsed_volumedetect_0 @ 0x1] mean_volume: -24.9 dB',
+  '[Parsed_volumedetect_0 @ 0x1] max_volume: -18.0 dB',
+].join('\n');
+const SILENT_LEVEL_STDERR = [
+  '[Parsed_volumedetect_0 @ 0x1] n_samples: 1152000',
+  '[Parsed_volumedetect_0 @ 0x1] mean_volume: -91.0 dB',
+  '[Parsed_volumedetect_0 @ 0x1] max_volume: -91.0 dB',
+].join('\n');
+
+// ffmpeg 调用形态判别。注意组装命令里也有 -map（[dubout]），不能拿 -map 判混流
+function isAssembleCall(record) {
+  return record.args.includes('-filter_complex');
+}
+
+function isMuxCall(record) {
+  return !isAssembleCall(record) && record.args.filter((arg) => arg === '-i').length === 2;
+}
 
 test('流计数：兼容 MP4 track id、MKV 语言标记与纯 WAV，忽略 attached pic 封面', () => {
   const mp4 = dub.countStreams([
@@ -600,6 +749,8 @@ function loadService(options = {}) {
   const speechRequests = [];
   const writtenFiles = [];
   const servers = [];
+  // 本任务 mock 写出的成品/中间文件（绝对路径），用于区分"源探测"与"成品回探"
+  const producedOutputs = new Set();
 
   const sender = {
     isDestroyed: () => false,
@@ -728,8 +879,23 @@ function loadService(options = {}) {
     }
     const isProbe = !args.includes('-progress');
     if (isProbe) {
+      // 配音轨音量探测：ffmpeg -i dub.wav -af volumedetect -f null -
+      if (args.includes('volumedetect')) {
+        setImmediate(() => {
+          child.stderr.emit('data', Buffer.from(
+            options.levelStderr !== undefined ? options.levelStderr : LEVEL_STDERR,
+          ));
+          child.emit('close', 0);
+        });
+        return child;
+      }
+      // 成品回探：输入路径是本任务刚写出的输出文件
+      const input = path.resolve(String(args[args.indexOf('-i') + 1] || ''));
+      const isOutput = producedOutputs.has(input);
       setImmediate(() => {
-        child.stderr.emit('data', Buffer.from(options.probeStderr || PROBE_STDERR));
+        const fallback = isOutput ? OUTPUT_PROBE_STDERR : PROBE_STDERR;
+        const custom = isOutput ? options.outputProbeStderr : options.probeStderr;
+        child.stderr.emit('data', Buffer.from(custom || fallback));
         // 真实 ffmpeg 在缺输出文件时退出码为 1，stderr 里已含所需信息
         child.emit('close', 1);
       });
@@ -747,6 +913,7 @@ function loadService(options = {}) {
       }
       try {
         fs.writeFileSync(output, 'ffmpeg-output');
+        producedOutputs.add(path.resolve(output));
       } catch (err) {
         child.stderr.emit('data', Buffer.from(String(err.message)));
         child.emit('close', 1);
@@ -892,11 +1059,13 @@ test('配音任务：逐条合成 WAV -> 组装 -> 混流，事件顺序与输�
   assert.equal(result.output, path.join(dir, 'movie_dub.mkv'));
   assert.ok(fs.existsSync(result.output), '成品应落盘');
 
-  // 合成：三条字幕各一次 POST，body 字段齐全
+  // 合成：三条字幕各一次 POST，body 字段齐全（voice 取默认说话人、seed 固定 0）
   assert.equal(h.speechRequests.length, 3);
   assert.deepEqual(h.speechRequests.map((req) => req.body.input), ['第一条', '第二条', '第三条']);
   for (const req of h.speechRequests) {
     assert.equal(req.body.language, 'chinese');
+    assert.equal(req.body.voice, 'Vivian');
+    assert.equal(req.body.seed, 0);
     assert.equal(req.body.response_format, 'wav');
     assert.equal(req.headers.accept, 'audio/wav');
   }
@@ -926,19 +1095,58 @@ test('配音任务：逐条合成 WAV -> 组装 -> 混流，事件顺序与输�
   assert.ok(progress.some((event) => event.phase === 'assemble'));
   assert.ok(progress.some((event) => event.phase === 'mux'));
 
-  // ffmpeg 调用：先探测，再组装（3 个 -i），再混流（新音轨序号 = 源音频数 1）
+  // ffmpeg 调用顺序：源探测 -> 组装（3 个 -i）-> 配音轨音量探测 -> 混流
+  // （新音轨序号 = 源音频数 1）-> 成品回探
   const ffmpegCalls = h.spawned.filter((record) => record.cmd === 'ffmpeg-mock');
-  assert.equal(ffmpegCalls.length, 3);
-  const assemble = ffmpegCalls[1].args;
+  const isProbeCall = (record) => !record.args.includes('-progress');
+  const levelCalls = ffmpegCalls.filter((record) => record.args.includes('volumedetect'));
+  assert.equal(levelCalls.length, 1, '组装后必须量一次配音轨峰值');
+  assert.equal(levelCalls[0].args[levelCalls[0].args.indexOf('-i') + 1],
+    path.join(h.userData, 'dub-cache', 'job-1', 'dub.wav'));
+  const probes = ffmpegCalls.filter((record) => isProbeCall(record) && !record.args.includes('volumedetect'));
+  assert.deepEqual(
+    probes.map((record) => path.resolve(String(record.args[record.args.indexOf('-i') + 1]))),
+    [path.resolve(video), path.resolve(result.output)],
+    '先探源视频，混流后再探一次成品',
+  );
+  const assemble = ffmpegCalls.find(isAssembleCall).args;
   assert.equal(assemble.filter((arg) => arg === '-i').length, 3);
-  const mux = ffmpegCalls[2].args;
+  const mux = ffmpegCalls.find(isMuxCall).args;
   assert.equal(mux[mux.indexOf('-c:a:1') + 1], 'aac');
   assert.ok(mux.includes('language=zh'));
   assert.equal(mux[mux.indexOf('-c:s') + 1], 'copy');
+  // 配音轨必须被设为默认音轨（源音轨的 default 摘掉），否则播放器放原声
+  assert.equal(mux[mux.indexOf('-disposition:a:0') + 1], '0');
+  assert.equal(mux[mux.indexOf('-disposition:a:1') + 1], 'default');
   assert.equal(mux[mux.length - 1], result.output);
 
   // 缓存目录用完即清
   assert.equal(fs.existsSync(path.join(h.userData, 'dub-cache', 'job-1')), false);
+  h.cleanup();
+});
+
+test('配音任务：指定的说话人透传到每条合成请求，非法值回默认', async () => {
+  const h = loadService();
+  const dir = tempDir();
+  const video = path.join(dir, 'movie.mp4');
+  fs.writeFileSync(video, 'video');
+  const subtitle = writeSubtitleFile(dir, [
+    { startMs: 0, endMs: 1000, text: 'A' },
+    { startMs: 2000, endMs: 3000, text: 'B' },
+  ]);
+
+  await h.service.start(h.sender, { id: 'job-speaker', video, subtitle, speaker: 'Rachel' });
+  assert.equal(h.speechRequests.length, 2);
+  for (const req of h.speechRequests) {
+    assert.equal(req.body.voice, 'Rachel', 'voice 必须逐条带上所选说话人');
+    assert.equal(req.body.seed, 0);
+  }
+
+  // 白名单外的说话人不报错，回默认第一个继续配音
+  h.speechRequests.length = 0;
+  await h.service.start(h.sender, { id: 'job-speaker-2', video, subtitle, speaker: 'Nobody' });
+  assert.equal(h.speechRequests.length, 2);
+  for (const req of h.speechRequests) assert.equal(req.body.voice, 'Vivian');
   h.cleanup();
 });
 
@@ -1055,6 +1263,108 @@ test('配音任务：视频无法探测时长时报错，不启动引擎', async
   h.cleanup();
 });
 
+test('配音任务：引擎返回空音频时在第几条就报错，不继续组装与混流', async () => {
+  const h = loadService({
+    onSpeech: ({ index, res }) => {
+      res.writeHead(200, { 'Content-Type': 'audio/wav' });
+      // 第二条：合法 RIFF 头但 data 段为 0；其余正常
+      res.end(index === 2 ? wavBytes(0) : wavBytes());
+    },
+  });
+  const dir = tempDir();
+  const video = path.join(dir, 'movie.mp4');
+  fs.writeFileSync(video, 'video');
+  const subtitle = writeSubtitleFile(dir, [
+    { startMs: 0, endMs: 1000, text: 'A' },
+    { startMs: 2000, endMs: 3000, text: 'B' },
+    { startMs: 4000, endMs: 5000, text: 'C' },
+  ]);
+
+  const result = await h.service.start(h.sender, { id: 'job-empty', video, subtitle });
+  assert.equal(result.output, null);
+  assert.equal(result.error.code, 'FFGUI_DUB_SYNTH');
+  // 错误可读：指出是第 2 条、且说明音频为空
+  assert.match(result.error.message, /2/);
+  assert.ok(result.error.message.includes(ZH_DUB.errAudioEmpty));
+  // 第三条不再请求，也不进入组装/混流
+  assert.equal(h.speechRequests.length, 2);
+  assert.equal(h.spawned.filter((record) => record.args.includes('-filter_complex')).length, 0);
+  assert.equal(h.spawned.filter(isMuxCall).length, 0);
+  assert.equal(fs.existsSync(path.join(dir, 'movie_dub.mp4')), false);
+  h.cleanup();
+});
+
+test('配音任务：组装出的音轨整条静音时报 FFGUI_DUB_SILENT，不交无声成品', async () => {
+  const h = loadService({ levelStderr: SILENT_LEVEL_STDERR });
+  const dir = tempDir();
+  const video = path.join(dir, 'movie.mp4');
+  fs.writeFileSync(video, 'video');
+  const subtitle = writeSubtitleFile(dir, [{ startMs: 0, endMs: 1000, text: 'A' }]);
+
+  const result = await h.service.start(h.sender, { id: 'job-silent', video, subtitle });
+  assert.equal(result.output, null);
+  assert.equal(result.error.code, 'FFGUI_DUB_SILENT');
+  assert.equal(result.error.message, ZH_DUB.errSilentTrack);
+  // 静音在组装后就被拦下，混流一次都不该发生
+  assert.equal(h.spawned.filter(isMuxCall).length, 0);
+  assert.equal(fs.existsSync(path.join(dir, 'movie_dub.mp4')), false);
+  assert.equal(h.events.some((event) => event.type === 'file-done'), false);
+  const errorEvent = h.events.find((event) => event.type === 'file-error');
+  assert.equal(errorEvent.error.code, 'FFGUI_DUB_SILENT');
+  assert.equal(errorEvent.error.params.maxDb, '-91');
+  h.cleanup();
+});
+
+test('配音任务：成品回探发现音轨数不对时报 FFGUI_DUB_MUX 并删掉成品', async () => {
+  // 混流"成功"但成品里只有源音轨（没有配音）——历史上就是这样静默交付的
+  const h = loadService({ outputProbeStderr: PROBE_STDERR });
+  const dir = tempDir();
+  const video = path.join(dir, 'movie.mp4');
+  fs.writeFileSync(video, 'video');
+  const subtitle = writeSubtitleFile(dir, [{ startMs: 0, endMs: 1000, text: 'A' }]);
+
+  const result = await h.service.start(h.sender, { id: 'job-nodub', video, subtitle });
+  assert.equal(result.output, null);
+  assert.equal(result.error.code, 'FFGUI_DUB_MUX');
+  // 错误可读：说明应有几条、实际几条
+  assert.ok(result.error.message.includes(
+    ZH_DUB.errOutputNoDubTrack.replace('{{expected}}', '2').replace('{{actual}}', '1'),
+  ));
+  assert.deepEqual({ ...result.error.params }, { expected: 2, actual: 1, path: path.join(dir, 'movie_dub.mp4') });
+  assert.equal(fs.existsSync(path.join(dir, 'movie_dub.mp4')), false, '不合格的成品必须删掉');
+  assert.equal(h.events.some((event) => event.type === 'file-done'), false);
+  h.cleanup();
+});
+
+test('配音任务：没有音轨的源视频混流后音轨数为 1 也算通过自检', async () => {
+  // 源无音轨：期望成品音轨数 = 0 + 1 = 1
+  const h = loadService({
+    probeStderr: [
+      "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'a.mp4':",
+      '  Duration: 00:01:10.50, start: 0.000000, bitrate: 1000 kb/s',
+      '    Stream #0:0[0x1](und): Video: h264 (High), yuv420p, 1280x720',
+    ].join('\n'),
+    outputProbeStderr: [
+      "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'a_dub.mp4':",
+      '  Duration: 00:01:10.50, start: 0.000000, bitrate: 1000 kb/s',
+      '    Stream #0:0[0x1](und): Video: h264 (High), yuv420p, 1280x720',
+      '    Stream #0:1[0x2](zho): Audio: aac (LC), 48000 Hz, stereo, fltp (default)',
+    ].join('\n'),
+  });
+  const dir = tempDir();
+  const video = path.join(dir, 'movie.mp4');
+  fs.writeFileSync(video, 'video');
+  const subtitle = writeSubtitleFile(dir, [{ startMs: 0, endMs: 1000, text: 'A' }]);
+
+  const result = await h.service.start(h.sender, { id: 'job-noaudio', video, subtitle });
+  assert.equal(result.error, undefined);
+  assert.equal(result.output, path.join(dir, 'movie_dub.mp4'));
+  const mux = h.spawned.find(isMuxCall).args;
+  // 源无音轨时配音是第 0 条，直接设为默认，不该出现摘自己 default 的 0
+  assert.equal(mux[mux.indexOf('-disposition:a:0') + 1], 'default');
+  h.cleanup();
+});
+
 test('状态：引擎缺失 / 无模型 / 正常三种 state', async () => {
   const missing = loadService({ enginePresent: false });
   const missStatus = await missing.service.status();
@@ -1062,6 +1372,8 @@ test('状态：引擎缺失 / 无模型 / 正常三种 state', async () => {
   assert.equal(missStatus.engine.present, false);
   assert.equal(missStatus.downloading, null);
   assert.equal(missStatus.languages.length, 11);
+  // vm 里造出来的数组与宿主数组原型不同，展开后再比
+  assert.deepEqual([...missStatus.speakers], dub.DEFAULT_SPEAKERS);
   missing.cleanup();
 
   const noModel = loadService({ variant: null });
@@ -1118,7 +1430,7 @@ test('引擎常驻：后端变化时重启，dispose 后回收', async () => {
   // 模型路径与 tokenizer 都传了
   const modelArg = engineCalls[0].args[engineCalls[0].args.indexOf('--model') + 1];
   const codecArg = engineCalls[0].args[engineCalls[0].args.indexOf('--codec') + 1];
-  assert.ok(modelArg.endsWith('qwen-talker-1.7b-base-Q8_0.gguf'));
+  assert.ok(modelArg.endsWith('qwen-talker-1.7b-customvoice-Q8_0.gguf'));
   assert.ok(codecArg.endsWith('qwen-tokenizer-12hz-Q8_0.gguf'));
 
   const status = await h.service.status();

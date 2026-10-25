@@ -690,6 +690,9 @@
       "errDuration": "配音音軌的長度無效",
       "errOutput": "輸出檔案無效",
       "errAudioInvalid": "配音引擎回傳的音訊無效",
+      "errAudioEmpty": "配音引擎回傳的音訊是空白的（沒有任何取樣）",
+      "errSilentTrack": "配音音軌整條沒有聲音，已中止，不會輸出無聲影片",
+      "errOutputNoDubTrack": "輸出檔案的音軌數量不對（應有 {{expected}} 條，實際 {{actual}} 條），配音沒有混進去",
       "errEnginePort": "配音引擎沒有回傳監聽埠",
       "errEngineSpawn": "無法啟動配音引擎：{{reason}}",
       "errEngineStart": "配音引擎啟動失敗",
@@ -872,6 +875,7 @@
     "downloadError": "模型下載失敗：{{error}}",
     "secOptions": "配音設定",
     "lblLanguage": "發音語言",
+    "lblSpeaker": "說話人",
     "lblBackend": "推理後端",
     "backendAuto": "自動（優先 Vulkan）",
     "backendVulkan": "Vulkan（GPU 加速）",
@@ -880,6 +884,7 @@
     "containerSame": "與原片相同",
     "containerMp4": "MP4",
     "containerMkv": "MKV",
+    "hintSpeaker": "說話人決定配音的音色；合成使用固定的隨機種子，同一份字幕每次結果一致。引擎就緒、模型下載完成後才能選擇。",
     "hintOptions": "合成出的配音會作為新音軌混入影片，原音軌保留，可在播放器中切換。",
     "btnStart": "開始配音",
     "hintRunning": "任務進行中：切換檔案、變更選項或離開頁面都會被攔截。",
@@ -935,6 +940,7 @@
       "errBackend": "推理後端無效",
       "errContainer": "輸出容器無效",
       "errVariant": "模型變體無效",
+      "errSpeaker": "說話人無效",
       "errNoCues": "字幕檔案中沒有可用的台詞"
     },
     "lang": {

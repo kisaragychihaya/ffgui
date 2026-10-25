@@ -4,7 +4,11 @@
 //
 // 流程：读取字幕文件 -> 本地 TTS 引擎（native/qwentts.cpp 的 tts-server，
 // OpenAI 兼容 HTTP）逐条合成 24kHz 单声道 WAV -> 按字幕时间轴拼成一条与视频
-// 等长的 48kHz 单声道音轨 -> 与视频混流为额外一条音轨。
+// 等长的 48kHz 单声道音轨 -> 与视频混流为额外一条音轨（源音轨全部保留，但
+// default disposition 让给配音轨，否则播放器仍放原声）。
+//
+// 三步都有自检，宁可报错也不交废成品：单条 WAV 的 RIFF/data 段非空 -> 组装后
+// 用 volumedetect 确认整条配音轨不是全静音 -> 混流后回探成品音轨数必须比源多 1。
 //
 // 引擎事实（依据 submodule native/qwentts.cpp 的 tools/tts-server.cpp 与
 // src/tts-server.h，勿凭印象改动）：
@@ -18,7 +22,11 @@
 //   GET /v1/models、GET|POST /v1/audio/voices、DELETE /v1/audio/voices/{name}
 // - 语言：--lang / body 里的 language 取上游 config.json 的 codec_language_id
 //   键名（GGUF 中存为 qwen3-tts.codec.language_names），引擎按小写不敏感匹配，
-//   auto 表示不指定语言 id。1.7b base 的十个语言见 LANGUAGES。
+//   auto 表示不指定语言 id。1.7b customvoice 的十个语言见 LANGUAGES。
+// - 音色：用 customvoice 模型，GGUF 的 qwen3-tts.codec.speaker_names 里带十个固定
+//   说话人（见 DEFAULT_SPEAKERS）。请求体的 voice 字段按名字选：引擎对已注册的克隆
+//   voice 优先，否则 p.speaker = req.voice，customvoice 模式下即该说话人；base 模型
+//   没有说话人表，传 voice 会被引擎拒（unknown voice）。
 //
 // 与 main/cdrip.js 一样自行 spawn ffmpeg（不复用 main/ffmpeg.js 的
 // runFfmpegTask），因为需要按阶段换算进度并支持取消。
@@ -60,9 +68,12 @@ const USER_AGENT = 'FFGui/1.0 (https://github.com/kisaragychihaya/ffgui)';
 const ARIA2_PROBE_TIMEOUT_MS = 5000;
 const ARIA2_KILL_GRACE_MS = 3000;
 
-// 模型文件名：v1 固定 talker 1.7b base 模式 + 与 variant 匹配的 tokenizer
+// 模型文件名：v1 固定 talker 1.7b customvoice 模式 + 与 variant 匹配的 tokenizer。
+// 用 customvoice 而不用 base：base 模型没有 speaker_names，每条字幕的音色都是随机
+// 采样出来的，同一份字幕两次配音听起来像两个人；customvoice 带十个固定说话人
+// （DEFAULT_SPEAKERS），音色由请求体的 voice 决定。tokenizer 两个模式共用同一份。
 function talkerFileName(variant) {
-  return `qwen-talker-1.7b-base-${variant}.gguf`;
+  return `qwen-talker-1.7b-customvoice-${variant}.gguf`;
 }
 
 function tokenizerFileName(variant) {
@@ -143,6 +154,30 @@ const LANGUAGES = [
 ].map((id) => ({ id, dictKey: `dub.lang.${id}` }));
 
 const LANGUAGE_IDS = new Set(LANGUAGES.map((entry) => entry.id));
+
+// customvoice 模型的固定说话人（GGUF 的 qwen3-tts.codec.speaker_names，与上游 README
+// 一致）。这份白名单同时是界面下拉的数据源（status().speakers 下发）和请求校验依据。
+// 取舍：已下载模型的真实列表以 GGUF 元数据为准（引擎起来后可 GET /v1/audio/voices
+// 查），但界面在引擎没起、模型没下载时也要能列出选项，为十个固定名字多跑一趟 HTTP
+// 不划算，故用静态白名单；上游万一增删说话人，兜底行为是「非法值回默认」而不是失败。
+const DEFAULT_SPEAKERS = [
+  'Vivian', 'Alex', 'Ann', 'Davis', 'Jackson',
+  'Jeff', 'Rachel', 'Ethan', 'Quinn', 'Charlotte',
+];
+// 默认说话人（界面初值 + 校验兜底）。写定字面量，不跟随数组顺序变化
+const DEFAULT_SPEAKER = 'Vivian';
+
+// 说话人归一：白名单内的按规范写法返回（大小写不敏感），其余一律回默认。
+// 宽松处理而不用报错：说话人只影响音色，名字对不上（上游改名、旧配置残留）不该让
+// 整条配音任务失败。只认字符串——数组/对象经 String() 可能拼出一个合法名字，
+// 那种值按类型错误处理。
+function normalizeSpeaker(value) {
+  if (typeof value !== 'string') return DEFAULT_SPEAKER;
+  const name = value.trim().toLowerCase();
+  if (!name) return DEFAULT_SPEAKER;
+  const hit = DEFAULT_SPEAKERS.find((speaker) => speaker.toLowerCase() === name);
+  return hit || DEFAULT_SPEAKER;
+}
 
 // 音轨语言元数据用的 BCP 47 码（容器层面，与引擎的 --lang 名字是两套）
 const BCP47 = {
@@ -479,6 +514,53 @@ function parseSubtitleCues(text, ext) {
   }));
 }
 
+// ---------- 纯函数：引擎返回的 WAV 校验 ----------
+
+// 逐块走 RIFF，取 fmt / data。引擎输出可能带 LIST 等附加块，不能假设 data 在
+// 固定偏移 44。dataBytes 只算文件里真实存在的字节（截断的响应不会被当成有声）。
+function inspectWavBuffer(buffer) {
+  const buf = Buffer.isBuffer(buffer) ? buffer : null;
+  if (!buf || buf.length < 12) return { ok: false, reason: 'notRiff', dataBytes: 0 };
+  if (buf.toString('latin1', 0, 4) !== 'RIFF' || buf.toString('latin1', 8, 12) !== 'WAVE') {
+    return { ok: false, reason: 'notRiff', dataBytes: 0 };
+  }
+  let offset = 12;
+  let sampleRate = 0;
+  let channels = 0;
+  let dataBytes = 0;
+  while (offset + 8 <= buf.length) {
+    const id = buf.toString('latin1', offset, offset + 4);
+    const size = buf.readUInt32LE(offset + 4);
+    const body = offset + 8;
+    if (id === 'fmt ' && body + 16 <= buf.length) {
+      channels = buf.readUInt16LE(body + 2);
+      sampleRate = buf.readUInt32LE(body + 4);
+    } else if (id === 'data') {
+      dataBytes = Math.max(0, Math.min(size, buf.length - body));
+    }
+    // RIFF 块按偶数字节对齐：奇数长度的块后面补一个填充字节
+    offset = body + size + (size % 2);
+  }
+  if (dataBytes <= 0) {
+    return { ok: false, reason: 'empty', dataBytes: 0, sampleRate, channels };
+  }
+  return { ok: true, reason: '', dataBytes, sampleRate, channels };
+}
+
+// 组装好的配音轨峰值低于该值即视为全静音（16bit 的绝对静音实测报 -91.0 dB，
+// 真实语音峰值通常高于 -20 dB，-60 dB 留足余量）
+const SILENT_MAX_DB = -60;
+
+// 从 volumedetect 的 stderr 里取峰值（-inf 归一为 -Infinity）；解析不出返回 null，
+// 调用方按"检查不了就放行"处理，不让可选检查挡住正常任务
+function parseMaxVolumeDb(text) {
+  const m = /max_volume:\s*(-?\d+(?:\.\d+)?|-inf)\s*dB/i.exec(String(text || ''));
+  if (!m) return null;
+  if (/^-inf$/i.test(m[1])) return -Infinity;
+  const value = Number(m[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
 // ---------- 纯函数：ffmpeg 参数 ----------
 
 // amix 的输入数上限：超过后分组拼接（FFmpeg 对超大输入数的 amix 会显著变慢）
@@ -561,6 +643,8 @@ function buildDubAssemblyArgs({ wavEntries, durationMs, outPath } = {}) {
 
 // 混流：保留源全部流（-map 0），把组装好的音轨作为最后一条音频流加入。
 // 新音轨序号 = 源音频流数量；MP4 字幕转 mov_text，MKV 原样复制。
+// 默认音轨必须换成配音：播放器按 default disposition 选轨，源音轨一直是默认时
+// 用户听到的还是原声，会以为"配音没混进去"（实测反馈的正是这个现象）。
 function buildDubMuxArgs({
   video,
   audioWav,
@@ -596,6 +680,10 @@ function buildDubMuxArgs({
     `-metadata:s:a:${index}`, `language=${containerLanguageTag(language, ext)}`,
     `-metadata:s:a:${index}`, `title=${title || t('main.dub.trackTitle')}`,
   ];
+  // 源音轨全部摘掉 default（否则两条音轨都自称默认，播放器行为不确定），
+  // 再把配音轨设为默认。源音轨一条不少地保留，可在播放器里手动切回。
+  for (let i = 0; i < index; i += 1) args.push(`-disposition:a:${i}`, '0');
+  args.push(`-disposition:a:${index}`, 'default');
   if (!keepSubtitle) {
     args.push('-sn');
   } else if (ext === 'mp4' || ext === 'm4v' || ext === 'mov') {
@@ -679,6 +767,8 @@ function validateDubJob(job) {
     container: 'same',
     variant: '',
   };
+  // 说话人只影响音色，白名单外的值直接回默认（不报错），见 normalizeSpeaker
+  normalized.speaker = normalizeSpeaker(job.speaker);
   if (job.language !== undefined && job.language !== null && job.language !== '') {
     const language = String(job.language).toLowerCase();
     if (!LANGUAGE_IDS.has(language)) {
@@ -984,9 +1074,14 @@ function createDubService(options = {}) {
       const cue = cues[i];
       const index = i + 1;
       emit({ jobId: state.id, type: 'cue-start', index, total });
+      // voice 取任务的说话人（customvoice 模型的固定音色），seed 固定 0：
+      // 同一字幕 + 同一说话人每次合成都得到相同结果，便于复现问题；引擎里 seed
+      // 传 -1 才是「不指定」，会取硬件随机数，两次配音的音色与停顿都不一样。
       const body = JSON.stringify({
         input: cue.text,
         language: state.job.language,
+        voice: normalizeSpeaker(state.job.speaker),
+        seed: 0,
         response_format: 'wav',
       });
       let res;
@@ -1016,11 +1111,15 @@ function createDubService(options = {}) {
           reason: speechErrorMessage(res),
         }), { index, status: res.status });
       }
-      // 引擎返回一次性 RIFF（24kHz s16 单声道），校验魔数防止把错误页当音频
-      if (res.body.length < 44 || res.body.toString('latin1', 0, 4) !== 'RIFF') {
+      // 引擎返回一次性 RIFF（24kHz s16 单声道），校验头部与 data 段：
+      // 只认魔数不够，HTTP 200 + 合法 RIFF + 空 data 段会让整条字幕静音落盘
+      const wav = inspectWavBuffer(res.body);
+      if (!wav.ok) {
         throw dubError('FFGUI_DUB_SYNTH', t('main.dub.errSynthesize', {
           index,
-          reason: t('main.dub.errAudioInvalid'),
+          reason: wav.reason === 'empty'
+            ? t('main.dub.errAudioEmpty')
+            : t('main.dub.errAudioInvalid'),
         }), { index });
       }
       const target = path.join(cacheDir, `cue_${String(index).padStart(4, '0')}.wav`);
@@ -1198,6 +1297,51 @@ function createDubService(options = {}) {
     });
   }
 
+  // 配音轨是否整条静音：用 volumedetect 取峰值。引擎正常返回但内容是静音时，
+  // 混流出来就是一个"有音轨没声音"的成品，用户只会以为配音没加上——宁可报错。
+  // 探测本身失败（缺 ffmpeg / 解析不出）返回 { ok: false }，调用方放行。
+  function probeAudioLevel(file) {
+    return new Promise((resolve) => {
+      const bin = getFfmpegPath();
+      if (!bin) {
+        resolve({ ok: false });
+        return;
+      }
+      let child;
+      try {
+        child = spawnImpl(bin, [
+          '-hide_banner', '-nostats', '-i', file, '-af', 'volumedetect', '-f', 'null', '-',
+        ], { stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch {
+        resolve({ ok: false });
+        return;
+      }
+      let stderr = '';
+      let finished = false;
+      const done = () => {
+        if (finished) return;
+        finished = true;
+        const maxDb = parseMaxVolumeDb(stderr);
+        if (maxDb === null) {
+          resolve({ ok: false });
+          return;
+        }
+        resolve({ ok: true, silent: maxDb <= SILENT_MAX_DB, maxDb });
+      };
+      if (child.stderr && typeof child.stderr.on === 'function') {
+        child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+      }
+      // stdout 也要读空，否则管道写满会把探测挂住
+      if (child.stdout && typeof child.stdout.on === 'function') child.stdout.on('data', () => {});
+      child.on('error', () => {
+        if (finished) return;
+        finished = true;
+        resolve({ ok: false });
+      });
+      child.on('close', done);
+    });
+  }
+
   // ---------- 状态 ----------
 
   function languages() {
@@ -1239,6 +1383,8 @@ function createDubService(options = {}) {
         }
         : null,
       languages: languages(),
+      // 说话人白名单随状态一起下发，界面下拉直接用（不必等引擎起来问 /v1/audio/voices）
+      speakers: DEFAULT_SPEAKERS.slice(),
     };
   }
 
@@ -1863,6 +2009,20 @@ function createDubService(options = {}) {
         }));
       }
 
+      // 组装出来的音轨一条声音都没有时直接失败：混流会"成功"产出一个有音轨但
+      // 全程无声的成品，比报错更难排查
+      const level = await probeAudioLevel(assembledWav);
+      if (state.cancelRequested) {
+        state.cancelRequested = true;
+        emit({ jobId: state.id, type: 'done', output: null, cancelled: true });
+        return { output: null, cancelled: true, cues: cues.length };
+      }
+      if (level.ok && level.silent) {
+        throw dubError('FFGUI_DUB_SILENT', t('main.dub.errSilentTrack'), {
+          maxDb: level.maxDb === undefined ? '' : String(level.maxDb),
+        });
+      }
+
       emit({ jobId: state.id, type: 'phase', phase: 'mux' });
       const muxArgs = buildDubMuxArgs({
         video: videoPath,
@@ -1896,6 +2056,25 @@ function createDubService(options = {}) {
       }
       if (!muxed.ok) {
         throw dubError('FFGUI_DUB_MUX', t('main.dub.errMux', { reason: muxed.error || '' }));
+      }
+
+      // 混流自检：成品必须比源多一条音轨，否则等于交了一个没配音的文件
+      const expectedAudio = video.audioCount + 1;
+      const output = await probeVideo(outPath);
+      if (!output.ok) {
+        throw dubError('FFGUI_DUB_MUX', t('main.dub.errMux', {
+          reason: output.error || '',
+        }), { path: outPath });
+      }
+      if (output.audioCount !== expectedAudio) {
+        throw dubError('FFGUI_DUB_MUX',
+          t('main.dub.errMux', {
+            reason: t('main.dub.errOutputNoDubTrack', {
+              expected: expectedAudio,
+              actual: output.audioCount,
+            }),
+          }),
+          { expected: expectedAudio, actual: output.audioCount, path: outPath });
       }
 
       completed = true;
@@ -2030,11 +2209,17 @@ module.exports = {
   resolveContainerExt,
   uniqueOutputPath,
   backendEnv,
+  inspectWavBuffer,
+  parseMaxVolumeDb,
+  normalizeSpeaker,
   // 常量
   LANGUAGES,
   MODEL_VARIANTS,
+  DEFAULT_SPEAKERS,
+  DEFAULT_SPEAKER,
   MAX_CUES,
   MAX_CUE_CHARS,
   MAX_AMIX_INPUTS,
+  SILENT_MAX_DB,
   EVENT_CHANNEL,
 };

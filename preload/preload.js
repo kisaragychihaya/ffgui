@@ -95,6 +95,8 @@ contextBridge.exposeInMainWorld('ffgui', {
   dubPickVideo: () => ipcRenderer.invoke('ffgui:dub-pick-video'),
   // 解析字幕为台词（cues: index/startMs/endMs/text，durationMs）
   dubParseSubtitle: (file) => ipcRenderer.invoke('ffgui:dub-parse-subtitle', file),
+  // 整个 job 原样透传：{ id, video, subtitle, language, speaker, backend, container, variant }
+  // （主进程做白名单校验与 speaker 归一，preload 不裁剪字段）
   dubStart: (job) => ipcRenderer.invoke('ffgui:dub-start', job),
   dubCancel: (jobId) => ipcRenderer.invoke('ffgui:dub-cancel', jobId),
   onDubEvent: (callback) => {

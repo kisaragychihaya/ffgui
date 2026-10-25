@@ -809,6 +809,9 @@
       "errDuration": "配音音轨的时长无效",
       "errOutput": "输出文件无效",
       "errAudioInvalid": "配音引擎返回的音频无效",
+      "errAudioEmpty": "配音引擎返回的音频是空白的（没有任何采样）",
+      "errSilentTrack": "配音音轨整条没有声音，已中止，不会输出无声视频",
+      "errOutputNoDubTrack": "输出文件的音轨数量不对（应有 {{expected}} 条，实际 {{actual}} 条），配音没有混进去",
       "errEnginePort": "配音引擎没有返回监听端口",
       "errEngineSpawn": "无法启动配音引擎：{{reason}}",
       "errEngineStart": "配音引擎启动失败",
@@ -872,6 +875,7 @@
     "downloadError": "模型下载失败：{{error}}",
     "secOptions": "配音设置",
     "lblLanguage": "发音语言",
+    "lblSpeaker": "说话人",
     "lblBackend": "推理后端",
     "backendAuto": "自动（优先 Vulkan）",
     "backendVulkan": "Vulkan（GPU 加速）",
@@ -880,6 +884,7 @@
     "containerSame": "与原片相同",
     "containerMp4": "MP4",
     "containerMkv": "MKV",
+    "hintSpeaker": "说话人决定配音的音色；合成本身用固定的随机种子，同一份字幕每次结果一致。引擎就绪、模型下载完成后才能选择。",
     "hintOptions": "合成出的配音会作为新的音轨混入视频，原音轨保留，可在播放器中切换。",
     "btnStart": "开始配音",
     "hintRunning": "任务进行中：切换文件、改选项或离开页面都会被拦截。",
@@ -935,6 +940,7 @@
       "errBackend": "推理后端无效",
       "errContainer": "输出容器无效",
       "errVariant": "模型变体无效",
+      "errSpeaker": "说话人无效",
       "errNoCues": "字幕文件中没有可用的台词"
     },
     "lang": {

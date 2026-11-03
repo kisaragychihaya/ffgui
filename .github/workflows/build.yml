@@ -39,11 +39,14 @@ jobs:
 
       # Vulkan SDK 是 Vulkan 后端的硬前置：ggml 的 ggml-vulkan 目标要求 glslc 与
       # SPIRV-Headers，并通过 VULKAN_SDK 环境变量定位（该 action 会写入 GITHUB_ENV）。
-      # 未验证：action 版本与输入名以此处写法为准，若上游改名需同步调整
+      # version 用 latest：LunarG 会把旧版 SDK 从下载站下架（锁 1.3.290.0 在 2026-10
+      # 突然 404，v0.7.0 发版因此失败）。该 action 的 latest 走 vulkan.lunarg.com
+      # webservices 解析成具体版本号，缓存 key 仍按解析结果生效；ggml 只需要
+      # glslc/SPIRV-Headers，新 SDK 向后兼容，无需锁版本
       - name: 安装 Vulkan SDK
         uses: humbletim/install-vulkan-sdk@v1.2
         with:
-          version: 1.3.290.0
+          version: latest
           cache: true
 
       # TTS 引擎（字幕配音）：Vulkan 为主力后端，构建失败时回退 CPU 版并继续打包；

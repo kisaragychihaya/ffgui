@@ -62,7 +62,8 @@
   `submodules: recursive`（qwentts.cpp 内部还套着 ggml 子模块，缺了 cmake 配置会直接失败）；
   二进制不入库，每平台按上面的后端现编。Windows x64 的 CPU/Vulkan 构建与 `bin/tts/` 产物布局
   已在本机实测（产物为 `build/Release/tts-server.exe` + 同目录 `ggml*.dll`，tts-server 需与
-  dll 同目录才能启动）；**仍未验证**的是 Windows arm64 的 `-A ARM64` 交叉、macOS 构建，以及
-  CI 里 Vulkan SDK action 的版本/输入名与 glslc 可用性
+  dll 同目录才能启动）；**仍未验证**的是 Windows arm64 的 `-A ARM64` 交叉与 macOS 构建。
+  Vulkan SDK action 的输入名已按上游 v1.2 核验，version 用 `latest`（锁具体版本会在
+  LunarG 下架旧版后 404，v0.7.0 发版失败过）
 - 仓库不提交 `bin/ffmpeg.exe`、`bin/aria2/` 等二进制，CI 每次现下；NSISBI 编译器同样不入库，
   构建时从 v0.1 Release 资源下载解压

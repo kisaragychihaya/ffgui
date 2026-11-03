@@ -135,6 +135,9 @@ module.exports = {
       /^\/ffmpeg-.*($|\/)/,
       /^\/ffmpeg\.7z$/,
       /^\/ffmpeg\.zip$/,
+      // CI 的 Vulkan SDK 安装包（约 290MB，安装步骤用完即删）：兜底防呆，
+      // 若步骤中途失败残留下来也不进 asar（x64 安装包曾因此 625MB）
+      /^\/vulkan_sdk\.exe$/,
       /^\/\.idea($|\/)/,
       /^\/\.git($|\/)/,
       /^\/\.agents($|\/)/,

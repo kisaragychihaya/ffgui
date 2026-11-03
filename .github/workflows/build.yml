@@ -38,16 +38,84 @@ jobs:
           Copy-Item native/ffgui-disc/target/release/ffgui-disc.exe bin/disc/ffgui-disc.exe
 
       # Vulkan SDK 是 Vulkan 后端的硬前置：ggml 的 ggml-vulkan 目标要求 glslc 与
-      # SPIRV-Headers，并通过 VULKAN_SDK 环境变量定位（该 action 会写入 GITHUB_ENV）。
-      # version 用 latest：LunarG 会把旧版 SDK 从下载站下架（锁 1.3.290.0 在 2026-10
-      # 突然 404，v0.7.0 发版因此失败）。该 action 的 latest 走 vulkan.lunarg.com
-      # webservices 解析成具体版本号，缓存 key 仍按解析结果生效；ggml 只需要
-      # glslc/SPIRV-Headers，新 SDK 向后兼容，无需锁版本
-      - name: 安装 Vulkan SDK
-        uses: humbletim/install-vulkan-sdk@v1.2
+      # SPIRV-Headers，并通过 VULKAN_SDK 环境变量定位。
+      # 不用 humbletim/install-vulkan-sdk：LunarG 新版安装包（1.4.3xx 起）换成 Qt IFW
+      # 打包，7z 只能解出 Bin/（Include/Lib 在附加数据里）；其无人值守参数又会触发
+      # "Cannot elevate access rights while running from command line"（SDK Core 组件
+      # 要写 HKLM 注册表，IFW 拒绝在命令行模式提权）——两条路都走不通。
+      # 这里自己解：主归档拿 Bin/，再按 7z magic 扫描把内嵌组件负载（Lib/Include/
+      # cmake/Source 等）逐个 carve 出来解到同一目录，布局与完整安装一致（本机已对
+      # 1.4.363.1 验证）。版本用 latest：锁版本会在 LunarG 下架后 404（v0.7.0 曾因此
+      # 发版失败）；若 LunarG 再改打包格式，下方三件套校验会失败并回退 CPU 后端。
+      # 全部放 $RUNNER_TEMP：不留仓库根目录（避免又被打进 app.asar，x64 安装包
+      # 曾因此 625MB）
+      - name: 解析 Vulkan SDK 版本
+        id: vulkan-sdk
+        shell: bash
+        run: |
+          version=$(curl -fsSL https://vulkan.lunarg.com/sdk/latest/windows.txt)
+          test -n "$version" || { echo '解析 Vulkan SDK latest 版本失败' >&2; exit 1; }
+          echo "version=$version" | tee -a "$GITHUB_OUTPUT"
+
+      - name: 恢复 Vulkan SDK 安装包缓存
+        id: vulkan-cache
+        uses: actions/cache/restore@v4
         with:
-          version: latest
-          cache: true
+          path: ${{ env.RUNNER_TEMP }}/vulkan_sdk.exe
+          key: vulkan-sdk-installer-windows-x64-${{ steps.vulkan-sdk.outputs.version }}
+
+      - name: 下载 Vulkan SDK 安装包
+        shell: bash
+        run: |
+          if [ ! -s "$RUNNER_TEMP/vulkan_sdk.exe" ]; then
+            curl -fsSL -o "$RUNNER_TEMP/vulkan_sdk.exe" \
+              "https://sdk.lunarg.com/sdk/download/${{ steps.vulkan-sdk.outputs.version }}/windows/vulkan_sdk.exe?Human=true"
+          fi
+          ls -lh "$RUNNER_TEMP/vulkan_sdk.exe"
+
+      - name: 保存 Vulkan SDK 安装包缓存
+        if: steps.vulkan-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.RUNNER_TEMP }}/vulkan_sdk.exe
+          key: vulkan-sdk-installer-windows-x64-${{ steps.vulkan-sdk.outputs.version }}
+
+      - name: 安装 Vulkan SDK（carve 内嵌组件）
+        shell: bash
+        run: |
+          set -e
+          sdk_dir="$RUNNER_TEMP/VULKAN_SDK"
+          mkdir -p "$sdk_dir"
+          # 主归档：Bin/ 工具（glslc、glslangValidator 等）
+          7z x -y "$RUNNER_TEMP/vulkan_sdk.exe" -o"$sdk_dir" > /dev/null
+          # 主归档字节范围（与版本无关地定位）：-slt 里 [0] 子归档的 Offset+Physical Size
+          outer_end=$(7z l -slt "$RUNNER_TEMP/vulkan_sdk.exe" | awk -F' = ' '
+            /^Offset = / { o=$2; next }
+            o != "" && /^Physical Size = / { print o + $2; exit }')
+          # 主归档之后每个 7z magic 都是一个内嵌组件负载（Lib/Include/cmake/Source…），
+          # 负载之间夹着 40 字节的 SHA-1 文本；逐个 carve 出来解到同一目录
+          magics=$(grep -abo $'\x37\x7a\xbc\xaf\x27\x1c' "$RUNNER_TEMP/vulkan_sdk.exe" |
+            cut -d: -f1 | awk -v end="$outer_end" '$1 > end')
+          prev=""; i=0; total=$(stat -c%s "$RUNNER_TEMP/vulkan_sdk.exe")
+          for m in $magics "" ; do
+            [ -n "$prev" ] || { prev=$m; continue; }
+            end_off=$total
+            [ -n "$m" ] && end_off=$m
+            len=$((end_off - prev - 40))
+            tail -c +$((prev + 1)) "$RUNNER_TEMP/vulkan_sdk.exe" | head -c "$len" > "$RUNNER_TEMP/.vk-payload.7z"
+            7z x -y "$RUNNER_TEMP/.vk-payload.7z" -o"$sdk_dir" > /dev/null 2>&1 || true
+            rm -f "$RUNNER_TEMP/.vk-payload.7z"
+            i=$((i + 1)); prev=$m
+          done
+          echo "carve 完成（$i 个内嵌负载）"
+          # ggml 三件套校验：任一缺失即失败（外层已回退 CPU 后端，不静默出错）
+          for f in Include/vulkan/vulkan.h Lib/vulkan-1.lib Lib/cmake/SPIRV-Headers/SPIRV-HeadersConfig.cmake Bin/glslc.exe; do
+            test -f "$sdk_dir/$f" || { echo "Vulkan SDK 布局异常，缺少 $f（LunarG 可能又改了打包格式）" >&2; exit 1; }
+          done
+          # cmake 经 VULKAN_SDK 环境变量定位头文件/库；Bin 进 PATH 兜底 glslc
+          echo "VULKAN_SDK=$(cygpath -m "$sdk_dir")" | tee -a "$GITHUB_ENV"
+          cygpath -w "$sdk_dir/Bin" >> "$GITHUB_PATH"
+          du -sh "$sdk_dir"
 
       # TTS 引擎（字幕配音）：Vulkan 为主力后端，构建失败时回退 CPU 版并继续打包；
       # 两者都失败只写警告并建空 bin/tts/，不阻断打包（字幕配音在运行时回退 PATH 查找）

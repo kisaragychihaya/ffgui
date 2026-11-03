@@ -29,8 +29,12 @@
   `release-1.37.0/aria2-1.37.0-win-64bit-build1.zip`（解压到 `$RUNNER_TEMP`），取 `aria2c.exe`
   放入 `bin/aria2/`（模型下载断点续传用）；
   dtolnay/rust-toolchain 构建 Rust 侧车并复制为
-  `bin/disc/ffgui-disc.exe`；humbletim/install-vulkan-sdk 装 Vulkan SDK 后
-  `node scripts/build-tts.cjs --backend vulkan --no-native` 构建 TTS 引擎到 `bin/tts/`
+  `bin/disc/ffgui-disc.exe`；Vulkan SDK 为自解（humbletim action 对新版 Qt IFW
+  安装包只能解出 Bin/，无人值守安装又要求提权写注册表，均不可用）：7z 解主归档拿
+  Bin/，再按 7z magic 把内嵌组件负载（Lib/Include/cmake 等）逐个 carve 出来，装到
+  `$RUNNER_TEMP/VULKAN_SDK`（刻意不进仓库根目录，避免又被打进 app.asar——x64 安装包
+  曾因此 625MB）；装好后 `node scripts/build-tts.cjs --backend vulkan --no-native`
+  构建 TTS 引擎到 `bin/tts/`
   （Vulkan 失败自动回退 `--backend cpu`，两者都失败只写警告并建空 `bin/tts/`，打包继续）；
   `npm ci` + `npm run package`，再经 `scripts/build-installer.cjs` 生成 NSIS 安装包；
   `FFGui-windows-x64.7z` 与 `FFGui-<版本>-x64-Setup.exe` 上传 artifact；Release 触发时同时
@@ -63,7 +67,7 @@
   二进制不入库，每平台按上面的后端现编。Windows x64 的 CPU/Vulkan 构建与 `bin/tts/` 产物布局
   已在本机实测（产物为 `build/Release/tts-server.exe` + 同目录 `ggml*.dll`，tts-server 需与
   dll 同目录才能启动）；**仍未验证**的是 Windows arm64 的 `-A ARM64` 交叉与 macOS 构建。
-  Vulkan SDK action 的输入名已按上游 v1.2 核验，version 用 `latest`（锁具体版本会在
-  LunarG 下架旧版后 404，v0.7.0 发版失败过）
+  Vulkan SDK 自解流程已按 1.4.363.1 本机完整验证（carve + 用其编出 Vulkan 版 tts-server），
+  工作流里有 ggml 三件套布局校验，LunarG 再改打包格式会显式失败并回退 CPU 后端
 - 仓库不提交 `bin/ffmpeg.exe`、`bin/aria2/` 等二进制，CI 每次现下；NSISBI 编译器同样不入库，
   构建时从 v0.1 Release 资源下载解压

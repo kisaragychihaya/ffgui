@@ -105,7 +105,8 @@ contextBridge.exposeInMainWorld('ffgui', {
     return () => ipcRenderer.removeListener('ffgui:dub-event', listener);
   },
 
-  // 屏幕录制（渲染进程 getDisplayMedia + MediaRecorder 采集编码，分块写入主进程）  recordPickOutput: () => ipcRenderer.invoke('ffgui:recordPickOutput'),
+  // 屏幕录制（渲染进程 getDisplayMedia + MediaRecorder 采集编码，分块写入主进程）
+  recordPickOutput: () => ipcRenderer.invoke('ffgui:recordPickOutput'),
   // 开始写盘：主进程显式创建输出文件流（同路径在录则报错，杜绝截断文件）
   recordStart: (targetPath) => ipcRenderer.invoke('ffgui:recordStart', targetPath),
   recordWriteChunk: (targetPath, buf) => ipcRenderer.invoke('ffgui:recordWriteChunk', targetPath, buf),

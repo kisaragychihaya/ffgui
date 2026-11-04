@@ -1139,6 +1139,45 @@ function registerDisplayMediaHandler() {
 // 每次 write 等回调返回（背压），长录制不会撑爆内存
 const recordStreams = new Map();
 
+// 录制收尾自动重封装：MediaRecorder 产出的是直播式 WebM（无 Cues 快进索引、无有效
+// 总时长，播放器无法拖动进度条），用 ffmpeg -c copy 重写容器补全后替换原文件。
+// 重封装失败只记日志、保留原始文件，绝不影响保存结果
+function remuxRecordInPlace(targetPath) {
+  return new Promise((resolve) => {
+    const tmpPath = targetPath.replace(/(\.webm)?$/i, '.ffgui-remux.webm');
+    execFile(getFfmpegPath(), [
+      '-hide_banner', '-y', '-i', targetPath, '-c', 'copy', tmpPath,
+    ], { maxBuffer: 16 * 1024 * 1024 }, (err) => {
+      let ok = false;
+      if (!err) {
+        try {
+          // 产物异常（不存在或空文件）视为失败，保留原文件
+          ok = fs.statSync(tmpPath).size > 0;
+        } catch {
+          ok = false;
+        }
+      }
+      if (ok) {
+        try {
+          // Windows 上 rename 不能覆盖已存在文件，先删原文件再改名
+          fs.unlinkSync(targetPath);
+          fs.renameSync(tmpPath, targetPath);
+          console.log(`[ffgui] 录制文件已重封装补全索引: ${targetPath}`);
+        } catch (renameErr) {
+          ok = false;
+          console.log(`[ffgui] 重封装产物替换原文件失败，保留原始文件: ${renameErr.message}`);
+        }
+      } else {
+        console.log(`[ffgui] 录制文件重封装失败，保留原始文件: ${targetPath}${err ? ` (${err.message})` : ''}`);
+      }
+      if (!ok) {
+        try { fs.unlinkSync(tmpPath); } catch { /* 临时文件不存在则忽略 */ }
+      }
+      resolve(ok);
+    });
+  });
+}
+
 // 录制结果转 MP4：视频流无损复制（VP9 封装进 MP4），Opus 重封装为 AAC（MP4 不支持 Opus）
 async function runRecordRemux(sender, input) {
   cancelled = false;
@@ -1304,21 +1343,28 @@ function registerIpc() {
     });
   }));
 
-  // 录制结束：关闭写流，返回文件大小
+  // 录制结束：关闭写流，重封装补全索引后返回文件大小
   ipcMain.handle('ffgui:recordFinish', (event, targetPath) => new Promise((resolve) => {
     const stream = recordStreams.get(targetPath);
     const done = (ok) => {
-      let size = 0;
-      try {
-        size = fs.statSync(targetPath).size;
-      } catch {
-        // 文件不存在则按失败处理
-        ok = false;
-      }
-      if (ok) {
-        console.log(`[ffgui] 录制已保存: ${targetPath} (${(size / 1024 / 1024).toFixed(1)} MB)`);
-      }
-      resolve({ ok, path: targetPath, size });
+      const finish = async () => {
+        let size = 0;
+        try {
+          size = fs.statSync(targetPath).size;
+        } catch {
+          // 文件不存在则按失败处理
+          ok = false;
+        }
+        if (ok) {
+          // MediaRecorder 产物无 Cues/时长，自动重封装补全；失败保留原文件
+          if (await remuxRecordInPlace(targetPath)) {
+            size = fs.statSync(targetPath).size;
+          }
+          console.log(`[ffgui] 录制已保存: ${targetPath} (${(size / 1024 / 1024).toFixed(1)} MB)`);
+        }
+        resolve({ ok, path: targetPath, size });
+      };
+      finish();
     };
     if (!stream) {
       done(false);

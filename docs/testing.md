@@ -76,7 +76,9 @@ aria2c 时，应自动回退内置 https 下载）、
   主进程已发出的日志行不会因切换语言回溯翻译（只影响之后新产生的消息）
 - 录屏限制：系统声音走 'loopback' 回环仅 Windows 支持（macOS/Linux 无系统级回环，只能录麦克风）；
   MediaRecorder 画质只能控码率（无 CRF），帧率跟随屏幕；录屏与转码等任务沿用全局单任务假设
-  （页面隔离保证不并发）
+  （页面隔离保证不并发）。MediaRecorder 原生产出直播式 WebM（无 Cues 快进索引与有效总时长），
+  保存时主进程已自动 `ffmpeg -c copy` 重封装补全（remuxRecordInPlace，失败保留原始文件）；
+  老的损坏文件可手动 `ffmpeg -i in.webm -c copy out.webm` 修复
 - 光盘抓取限制：物理光驱代码已接入（open_scan/DiscSession）但未真机验证，本机无光驱；AACS
   keydb 需用户自备本地 KEYDB.cfg，在线密钥服务禁用；BD+ 盘未验证；`bin/disc/ffgui-disc.exe`
   （约 9.5MB，已启用 strip/LTO）随 extraResource 分发，三个 CI 平台均先构建对应架构侧车再打包

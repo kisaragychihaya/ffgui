@@ -345,7 +345,10 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
   时显式建流（同路径在录则报错），`writeChunk` 绝不事后新建（'w' 会截断已完成的文件），停止后
   迟到的分块被拒绝；渲染层另有 starting/stopping/acceptChunks 防重入与分块接收窗口，杜绝并发/
   迟到写入截断文件；`recordPickOutput` 弹保存对话框（默认 视频/record_<时间戳>.webm）；
-  `recordFinish` 关流返回大小；`recordDiscard` 删半成品；`recordRemux` 把 WebM 转 MP4
+  `recordFinish` 关流后自动重封装补全索引再返回大小（MediaRecorder 产物是直播式
+  WebM，无 Cues 快进索引与有效时长；`remuxRecordInPlace` 用 `ffmpeg -c copy` 重写容器
+  替换原文件，失败只记日志保留原始文件，不影响保存结果）；`recordDiscard` 删半成品；
+  `recordRemux` 把 WebM 转 MP4
   （`-c:v copy` 无损 + Opus 转 AAC，无音轨传 `-an`，复用 runFfmpegTask 进度事件）；
   `getDesktopSources` 枚举屏幕/窗口来源（含缩略图 data URL）
 - **IPC handler**：`ffgui:getCapabilities / clearCapsCache / pickMediaFiles / pickDirectory /

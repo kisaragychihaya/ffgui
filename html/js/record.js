@@ -65,7 +65,7 @@
     busyRemux: false,
     starting: false,       // 开始流程进行中（防双击重复进入）
     stopping: false,       // 停止流程进行中（防重复停止）
-    acceptChunks: false,   // 是否接收分块：停止流程发起后拒绝迟到分块
+    acceptChunks: false,   // 是否接收分块：recorder 停止落地后关闭，拒绝迟到分块
   };
 
   // ---------- 工具 ----------
@@ -430,8 +430,6 @@
     const recorder = state.recorder;
     if (!recorder) return;
     state.stopping = true;
-    // 先关闭分块接收窗口，停止流程中迟到的 dataavailable 直接忽略
-    state.acceptChunks = false;
     updateUI();
 
     const outPath = state.outFile;
@@ -441,7 +439,10 @@
     } catch {
       // 可能已停止
     }
+    // stop 事件保证在最后一个 dataavailable 之后才触发，等它落地再关接收窗口，
+    // 提前关闭会把含收尾数据的最后一个分块误丢弃（文件尾部截断）
     await waitRecorderStopped();
+    state.acceptChunks = false;
     // 等最后一个分块写完
     try { await state.writeChain; } catch { /* 错误已记录在 state.writeError */ }
     if (state.mixCtx) {

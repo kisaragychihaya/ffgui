@@ -31,8 +31,9 @@
 ## TTS 引擎 tts-server（字幕配音）
 
 字幕配音（`main/dub.js`）通过 OpenAI 兼容 HTTP 接口调用本地 TTS 引擎 `tts-server`，
-引擎源码是 git submodule `native/qwentts.cpp`（fork 自 ServeurpersoCom/qwentts.cpp，
-自带 ggml 子模块）。产物位置约定：
+引擎源码是 git submodule `native/qwentts.cpp`，URL 指向上游官方仓库
+ServeurpersoCom/qwentts.cpp，主仓库锁定具体提交，内部还套着 ggml 子模块
+（同为 ServeurpersoCom 的 fork）。产物位置约定：
 
 - Windows：`bin/tts/tts-server.exe`
 - macOS：`bin/tts/tts-server`
@@ -46,6 +47,15 @@ extraResource 复制到 `resources/tts/`。模型（GGUF）不随包分发，首
 
 ```sh
 git submodule update --init --recursive   # 必须加 --recursive：qwentts.cpp 里还有 ggml 子模块
+```
+
+子模块固定在上游的某个提交（上游只维护 master，不发 tag/release）。跟进上游最新：
+
+```sh
+git -C native/qwentts.cpp fetch origin
+git -C native/qwentts.cpp checkout origin/master
+git -C native/qwentts.cpp submodule update --init --recursive
+git add native/qwentts.cpp   # 在主仓库提交新的子模块指针
 ```
 
 ### 一键构建（推荐）

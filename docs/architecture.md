@@ -209,9 +209,10 @@ native/ffgui-disc/  Rust 光盘侧车（cargo crate，freemkv-engine v1.8.4，[p
                     已接入但未真机验证，keydbPath 可选本地密钥库（在线密钥服务禁用）。产物
                     target/release/ffgui-disc(.exe)，打包时复制到 bin/disc/。freemkv-unlock 内含
                     非 MIT 厂商驱动微码，分发须随附上游 LICENSES/NOTICE
-native/qwentts.cpp/ git submodule：TTS 引擎 tts-server 源码（fork 自 ServeurpersoCom/qwentts.cpp，
-                    内部还套着 ggml 子模块，clone 必须 --recurse-submodules，CI 的 checkout
-                    用 submodules: recursive）。cmake 构建，Vulkan 后端开关是 ggml 的
+native/qwentts.cpp/ git submodule：TTS 引擎 tts-server 源码，URL 指向上游官方仓库
+                    ServeurpersoCom/qwentts.cpp 并锁定具体提交；内部还套着 ggml 子模块
+                    （同为 ServeurpersoCom 的 fork），clone 必须 --recurse-submodules，CI 的
+                    checkout 用 submodules: recursive。cmake 构建，Vulkan 后端开关是 ggml 的
                     -DGGML_VULKAN=ON（Vulkan SDK 必需，ggml-vulkan 要求 glslc 与
                     SPIRV-Headers）；产物 CMAKE_RUNTIME_OUTPUT_DIRECTORY = 构建根目录，即
                     build/tts-server(.exe)（VS 生成器在 build/Release/），同目录还会生成

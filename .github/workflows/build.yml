@@ -58,7 +58,42 @@ jobs:
           test -n "$version" || { echo '解析 Vulkan SDK latest 版本失败' >&2; exit 1; }
           echo "version=$version" | tee -a "$GITHUB_OUTPUT"
 
+      # TTS 产物缓存：源码 = qwentts.cpp 子模块固定 commit（ggml 子模块随其钉死），
+      # 构建参数本 job 固定，产物是自包含二进制——命中即跳过 Vulkan SDK 安装与整个 cmake 编译。
+      # 键含 Vulkan SDK 版本与 build-tts.cjs 哈希，两者变化时自动失效
+      - name: 计算 TTS 缓存键
+        id: tts-key
+        shell: bash
+        run: |
+          sha=$(git submodule status -- native/qwentts.cpp | awk '{print $1}' | tr -cd '0-9a-f')
+          test -n "$sha" || { echo '获取 qwentts.cpp 子模块 commit 失败' >&2; exit 1; }
+          echo "sha=$sha" | tee -a "$GITHUB_OUTPUT"
+
+      - name: 恢复 TTS 引擎产物缓存
+        id: tts-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: bin/tts
+          key: tts-v1-windows-x64-vulkan-${{ steps.tts-key.outputs.sha }}-${{ steps.vulkan-sdk.outputs.version }}-${{ hashFiles('scripts/build-tts.cjs') }}
+
+      # 防污染校验：只接受主后端（vulkan）构建的完整产物（.backend 标记由构建步骤写入）。
+      # 回退 CPU 版、缺文件、被旧逻辑污染过的缓存一律视为未命中，转入正常构建
+      - name: 校验 TTS 缓存产物
+        id: tts-valid
+        shell: bash
+        run: |
+          ok=false
+          if [ "${{ steps.tts-cache.outputs.cache-hit }}" = "true" ] \
+             && [ -f bin/tts/tts-server.exe ] \
+             && [ "$(cat bin/tts/.backend 2>/dev/null)" = "vulkan" ]; then
+            ok=true
+          fi
+          echo "ok=$ok" | tee -a "$GITHUB_OUTPUT"
+          echo "TTS 缓存有效：$ok"
+
+      # TTS 缓存命中时无需 Vulkan SDK（不编译），安装包恢复/下载/保存/安装全部跳过
       - name: 恢复 Vulkan SDK 安装包缓存
+        if: steps.tts-valid.outputs.ok != 'true'
         id: vulkan-cache
         uses: actions/cache/restore@v4
         with:
@@ -66,6 +101,7 @@ jobs:
           key: vulkan-sdk-installer-windows-x64-${{ steps.vulkan-sdk.outputs.version }}
 
       - name: 下载 Vulkan SDK 安装包
+        if: steps.tts-valid.outputs.ok != 'true'
         shell: bash
         run: |
           if [ ! -s vulkan_sdk.exe ]; then
@@ -75,13 +111,14 @@ jobs:
           ls -lh vulkan_sdk.exe
 
       - name: 保存 Vulkan SDK 安装包缓存
-        if: steps.vulkan-cache.outputs.cache-hit != 'true'
+        if: steps.tts-valid.outputs.ok != 'true' && steps.vulkan-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: vulkan_sdk.exe
           key: vulkan-sdk-installer-windows-x64-${{ steps.vulkan-sdk.outputs.version }}
 
       - name: 安装 Vulkan SDK（carve 内嵌组件）
+        if: steps.tts-valid.outputs.ok != 'true'
         shell: bash
         run: |
           set -e
@@ -128,25 +165,50 @@ jobs:
       # TTS 引擎（字幕配音）：Vulkan 为主力后端，构建失败时回退 CPU 版并继续打包；
       # 两者都失败只写警告并建空 bin/tts/，不阻断打包（字幕配音在运行时回退 PATH 查找）
       - name: 构建 TTS 引擎 tts-server
+        if: steps.tts-valid.outputs.ok != 'true'
+        id: tts-build
         shell: pwsh
         run: |
+          # 先清掉缓存恢复的残留（校验未通过时才走到这），避免旧 dll 混进新产物
+          Remove-Item -Recurse -Force bin/tts -ErrorAction SilentlyContinue
           # --no-native：runner 的 CPU 可能带 AVX512 等扩展，-march=native 会让产物
           # 在用户机器上报非法指令，分发用构建必须关掉宿主优化
           node scripts/build-tts.cjs --backend vulkan --no-native
-          if ($LASTEXITCODE -ne 0) {
+          $backend = ''
+          if ($LASTEXITCODE -eq 0) {
+            $backend = 'vulkan'
+          } else {
             Write-Warning 'Vulkan 版 tts-server 构建失败，回退 CPU 后端'
             node scripts/build-tts.cjs --backend cpu --no-native --clean
+            if ($LASTEXITCODE -eq 0) { $backend = 'cpu' }
           }
-          if ($LASTEXITCODE -ne 0) {
+          if (-not $backend) {
             Write-Warning 'CPU 版 tts-server 也构建失败，本次打包不含 TTS 引擎（字幕配音回退 PATH 查找）'
             New-Item -ItemType Directory -Force bin/tts | Out-Null
           }
           if (Test-Path bin/tts/tts-server.exe) {
             Get-Item bin/tts/tts-server.exe | Select-Object FullName, Length
           }
+          # 记录实际后端：缓存校验/保存都以此识别回退产物
+          if ($backend) {
+            Set-Content -NoNewline -Path bin/tts/.backend -Value $backend
+          }
+          "backend=$backend" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           # GitHub 的 pwsh 包装会在脚本末尾按 $LASTEXITCODE 退出，这里显式归零，
           # 否则"构建失败但继续打包"会被当成步骤失败（真正的错误已由 Write-Warning 记录）
           exit 0
+
+      # 只有主后端（vulkan）构建成功才写缓存：回退的 CPU 产物绝不写入 vulkan 键，
+      # 否则后续运行会"命中"降级产物，Vulkan 版就再也回不来了
+      - name: 保存 TTS 引擎产物缓存
+        # continue-on-error：缓存不可变，同名键已存在（如历史上被污染的条目）时保存会报错，
+        # 但产物本身已就绪，不应因此失败整个 job
+        continue-on-error: true
+        if: steps.tts-valid.outputs.ok != 'true' && steps.tts-build.outputs.backend == 'vulkan'
+        uses: actions/cache/save@v4
+        with:
+          path: bin/tts
+          key: tts-v1-windows-x64-vulkan-${{ steps.tts-key.outputs.sha }}-${{ steps.vulkan-sdk.outputs.version }}-${{ hashFiles('scripts/build-tts.cjs') }}
 
       - name: 下载 ffmpeg 并放入 bin/
         shell: pwsh
@@ -195,6 +257,11 @@ jobs:
           New-Item -ItemType Directory -Force bin/aria2 | Out-Null
           Copy-Item $exe.FullName bin/aria2/aria2c.exe
           .\bin\aria2\aria2c.exe --version | Select-Object -First 1
+
+      # .backend 只是缓存校验标记，不随安装包分发
+      - name: 移除 TTS 后端标记文件
+        shell: bash
+        run: rm -f bin/tts/.backend
 
       - name: 安装依赖
         run: npm ci
@@ -333,14 +400,51 @@ jobs:
           if ($machine -ne 0xAA64) { throw ('bin/disc/ffgui-disc.exe 不是 ARM64 二进制 (machine=0x{0:X4})' -f $machine) }
           Write-Host 'ffgui-disc.exe 机器类型校验通过：ARM64'
 
+      # TTS 产物缓存：源码 = qwentts.cpp 子模块固定 commit，本 job 构建参数固定（CPU/arm64），
+      # 命中即跳过整个交叉编译
+      - name: 计算 TTS 缓存键
+        id: tts-key
+        shell: bash
+        run: |
+          sha=$(git submodule status -- native/qwentts.cpp | awk '{print $1}' | tr -cd '0-9a-f')
+          test -n "$sha" || { echo '获取 qwentts.cpp 子模块 commit 失败' >&2; exit 1; }
+          echo "sha=$sha" | tee -a "$GITHUB_OUTPUT"
+
+      - name: 恢复 TTS 引擎产物缓存
+        id: tts-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: bin/tts
+          key: tts-v1-windows-arm64-cpu-${{ steps.tts-key.outputs.sha }}-${{ hashFiles('scripts/build-tts.cjs') }}
+
+      # 防污染校验：要求产物齐全且 .backend 标记为本 job 后端（cpu），否则转入正常构建
+      - name: 校验 TTS 缓存产物
+        id: tts-valid
+        shell: bash
+        run: |
+          ok=false
+          if [ "${{ steps.tts-cache.outputs.cache-hit }}" = "true" ] \
+             && [ -f bin/tts/tts-server.exe ] \
+             && [ "$(cat bin/tts/.backend 2>/dev/null)" = "cpu" ]; then
+            ok=true
+          fi
+          echo "ok=$ok" | tee -a "$GITHUB_OUTPUT"
+          echo "TTS 缓存有效：$ok"
+
       # ARM64 只做 CPU 后端：Vulkan 交叉构建的工具链（glslc/SPIRV-Headers + arm64 链接）不稳。
       # 未验证：-A ARM64 依赖 runner 装好 MSVC ARM64 工具集（现有 cargo/ffmpeg 步骤已依赖它）。
       # 构建失败不阻断打包，但建出空 bin/tts/（避免 extraResource 指向不存在的路径）
       - name: 构建 ARM64 TTS 引擎 tts-server（仅 CPU）
+        if: steps.tts-valid.outputs.ok != 'true'
+        id: tts-build
         shell: pwsh
         run: |
+          # 先清掉缓存恢复的残留（校验未通过时才走到这），避免旧 dll 混进新产物
+          Remove-Item -Recurse -Force bin/tts -ErrorAction SilentlyContinue
           node scripts/build-tts.cjs --backend cpu --arch arm64 --no-native
-          if ($LASTEXITCODE -ne 0) {
+          $backend = ''
+          if ($LASTEXITCODE -eq 0) { $backend = 'cpu' }
+          if (-not $backend) {
             Write-Warning 'ARM64 版 tts-server 构建失败，本次打包不含 TTS 引擎（字幕配音回退 PATH 查找）'
             New-Item -ItemType Directory -Force bin/tts | Out-Null
           }
@@ -352,8 +456,23 @@ jobs:
             if ($machine -ne 0xAA64) { throw ('bin/tts/tts-server.exe 不是 ARM64 二进制 (machine=0x{0:X4})' -f $machine) }
             Write-Host 'tts-server.exe 机器类型校验通过：ARM64'
           }
+          # 记录实际后端：缓存校验/保存都以此识别产物来源
+          if ($backend) {
+            Set-Content -NoNewline -Path bin/tts/.backend -Value $backend
+          }
+          "backend=$backend" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           # 同 x64：构建失败不阻断打包，显式归零 $LASTEXITCODE（真正的错误已记录为警告）
           exit 0
+
+      # 构建成功才写缓存（本 job 只有 cpu 一种后端，backend=cpu 即成功）
+      - name: 保存 TTS 引擎产物缓存
+        # continue-on-error：缓存不可变，同名键已存在时保存会报错，但产物本身已就绪
+        continue-on-error: true
+        if: steps.tts-valid.outputs.ok != 'true' && steps.tts-build.outputs.backend == 'cpu'
+        uses: actions/cache/save@v4
+        with:
+          path: bin/tts
+          key: tts-v1-windows-arm64-cpu-${{ steps.tts-key.outputs.sha }}-${{ hashFiles('scripts/build-tts.cjs') }}
 
       # aria2 官方没有 Windows arm64 构建，上游也没有可白嫖的 arm64 资产（见下面步骤）：
       # 走「官方 x64 构建 + Windows 11 ARM 系统模拟」，失败只警告不阻断（运行时回退
@@ -446,6 +565,11 @@ jobs:
             Remove-Item -Recurse -Force bin/aria2 -ErrorAction SilentlyContinue
           }
           exit 0
+
+      # .backend 只是缓存校验标记，不随安装包分发
+      - name: 移除 TTS 后端标记文件
+        shell: bash
+        run: rm -f bin/tts/.backend
 
       - name: 安装依赖
         run: npm ci
@@ -601,15 +725,68 @@ jobs:
           fi
 
       # macOS 只做 CPU 后端（Metal 由 ggml 在 APPLE 下默认开启，Vulkan/MoltenVK 暂不涉及）。
+      # 产物缓存：源码 = qwentts.cpp 子模块固定 commit，命中即跳过编译
+      - name: 计算 TTS 缓存键
+        id: tts-key
+        shell: bash
+        run: |
+          sha=$(git submodule status -- native/qwentts.cpp | awk '{print $1}' | tr -cd '0-9a-f')
+          test -n "$sha" || { echo '获取 qwentts.cpp 子模块 commit 失败' >&2; exit 1; }
+          echo "sha=$sha" | tee -a "$GITHUB_OUTPUT"
+
+      - name: 恢复 TTS 引擎产物缓存
+        id: tts-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: bin/tts
+          key: tts-v1-macos-arm64-cpu-${{ steps.tts-key.outputs.sha }}-${{ hashFiles('scripts/build-tts.cjs') }}
+
+      # 防污染校验：要求产物齐全且 .backend 标记为本 job 后端（cpu），否则转入正常构建
+      - name: 校验 TTS 缓存产物
+        id: tts-valid
+        shell: bash
+        run: |
+          ok=false
+          if [ "${{ steps.tts-cache.outputs.cache-hit }}" = "true" ] \
+             && [ -f bin/tts/tts-server ] \
+             && [ "$(cat bin/tts/.backend 2>/dev/null)" = "cpu" ]; then
+            ok=true
+          fi
+          echo "ok=$ok" | tee -a "$GITHUB_OUTPUT"
+          echo "TTS 缓存有效：$ok"
+
       # cmake 在 runner 上已预装；构建失败不阻断打包，但要建出 bin/tts/
       - name: 构建 TTS 引擎 tts-server（仅 CPU）
+        if: steps.tts-valid.outputs.ok != 'true'
+        id: tts-build
         run: |
           set -e
+          # 先清掉缓存恢复的残留（校验未通过时才走到这），避免旧 dylib 混进新产物
+          rm -rf bin/tts
           if ! node scripts/build-tts.cjs --backend cpu --no-native; then
             echo '警告：tts-server 构建失败，本次打包不含 TTS 引擎（字幕配音回退 PATH 查找）'
             mkdir -p bin/tts
+          elif [ -f bin/tts/tts-server ]; then
+            # 记录实际后端：缓存校验/保存都以此识别产物来源
+            printf 'cpu' > bin/tts/.backend
+            echo "backend=cpu" >> "$GITHUB_OUTPUT"
           fi
           ls -l bin/tts/
+
+      # 构建成功才写缓存（本 job 只有 cpu 一种后端，backend=cpu 即成功）
+      - name: 保存 TTS 引擎产物缓存
+        # continue-on-error：缓存不可变，同名键已存在时保存会报错，但产物本身已就绪
+        continue-on-error: true
+        if: steps.tts-valid.outputs.ok != 'true' && steps.tts-build.outputs.backend == 'cpu'
+        uses: actions/cache/save@v4
+        with:
+          path: bin/tts
+          key: tts-v1-macos-arm64-cpu-${{ steps.tts-key.outputs.sha }}-${{ hashFiles('scripts/build-tts.cjs') }}
+
+      # .backend 只是缓存校验标记，不随安装包分发
+      - name: 移除 TTS 后端标记文件
+        shell: bash
+        run: rm -f bin/tts/.backend
 
       - name: 安装依赖
         run: npm ci

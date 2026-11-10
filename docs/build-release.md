@@ -64,7 +64,14 @@
   macOS 上读不出 CD 的 TOC）
 - TTS 引擎：源码是 submodule `native/qwentts.cpp`，三个 job 的 checkout 都必须是
   `submodules: recursive`（qwentts.cpp 内部还套着 ggml 子模块，缺了 cmake 配置会直接失败）；
-  二进制不入库，每平台按上面的后端现编。Windows x64 的 CPU/Vulkan 构建与 `bin/tts/` 产物布局
+  二进制不入库，每平台按上面的后端现编，**产物走 actions/cache**：键为
+  `tts-v1-<平台>-<架构>-<后端>-<qwentts.cpp SHA>[-<Vulkan SDK 版本>]-<build-tts.cjs 哈希>`
+  （`v1` 是手动失效位，改缓存策略时递增），命中即跳过编译，Windows x64 连 Vulkan SDK
+  安装四步一起跳过。防污染：构建成功后往 `bin/tts/.backend` 写实际后端标记，**只有主后端
+  构建成功才保存缓存**（x64 回退的 CPU 产物绝不写入 vulkan 键），恢复时也校验标记，
+  校验不过按未命中重建（重建前先清空 `bin/tts/`，避免残留 dll 混入）；保存步骤带
+  `continue-on-error`（缓存键不可变，同名键已存在时保存报错不应拖垮 job）。
+  Windows x64 的 CPU/Vulkan 构建与 `bin/tts/` 产物布局
   已在本机实测（产物为 `build/Release/tts-server.exe` + 同目录 `ggml*.dll`，tts-server 需与
   dll 同目录才能启动）；**仍未验证**的是 Windows arm64 的 `-A ARM64` 交叉与 macOS 构建。
   Vulkan SDK 自解流程已按 1.4.363.1 本机完整验证（carve + 用其编出 Vulkan 版 tts-server），

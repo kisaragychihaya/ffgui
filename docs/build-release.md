@@ -78,7 +78,9 @@
   `continue-on-error`（缓存键不可变，同名键已存在时保存报错不应拖垮 job）。
   Windows x64 的 CPU/Vulkan 构建与 `bin/tts/` 产物布局
   已在本机实测（产物为 `build/Release/tts-server.exe` + 同目录 `ggml*.dll`，tts-server 需与
-  dll 同目录才能启动）；**仍未验证**的是 ARM64 Vulkan SDK 的 carve 解包布局与 macOS 构建。
+  dll 同目录才能启动）；**ARM64 Vulkan SDK 的 carve 解包与 Vulkan 版 tts-server 已在
+  windows-11-arm runner 上实测通过**（动态后端 ggml-vulkan.dll 随产物分发）；**仍未验证**
+  的是 macOS 构建。
   Vulkan SDK 自解流程已按 1.4.363.1 本机完整验证（carve + 用其编出 Vulkan 版 tts-server），
   工作流里有 ggml 三件套布局校验，LunarG 再改打包格式会显式失败并回退 CPU 后端
 - 仓库不提交 `bin/ffmpeg.exe`、`bin/aria2/` 等二进制，CI 每次现下；NSISBI 编译器同样不入库，

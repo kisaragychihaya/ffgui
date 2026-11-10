@@ -621,6 +621,17 @@ function cancelCurrentTask() {
   if (currentChild) currentChild.kill();
 }
 
+// 新任务开始前清空上一轮的取消标记；图片转换等复用 runFfmpegTask 的模块
+// 与转换/合并共用同一标记，不重置会让连续两次任务被旧标记污染
+function resetCancel() {
+  cancelled = false;
+}
+
+// 供复用 runFfmpegTask 的模块在批量任务的文件间隙读取取消标记
+function isCancelled() {
+  return cancelled;
+}
+
 // 通用 ffmpeg 任务执行器：spawn、stderr 日志转发、-progress 解析、结束处理
 // taskName 用于控制台日志措辞（转换/合并）
 function runFfmpegTask({ args, index, label, output, getDuration, onStderrText, send, taskName }) {
@@ -1418,10 +1429,16 @@ function registerIpc() {
 
 // getFfmpegPath 一并导出：main/cdrip.js 与 main/dub.js 都要自行 spawn ffmpeg
 // （修复：此前只导出上面四个，require 侧拿到 undefined，抓轨/配音会 spawn 失败）
+// runFfmpegTask / buildOutputPath：图片格式互转等新任务直接复用 spawn 进度解析与
+// 输出命名避让，避免复制实现；resetCancel / isCancelled 供复用方管理共享取消标记
 module.exports = {
   registerIpc,
   getCapabilities,
   runSingleFileConversion,
   cancelCurrentTask,
   getFfmpegPath,
+  runFfmpegTask,
+  buildOutputPath,
+  resetCancel,
+  isCancelled,
 };

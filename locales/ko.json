@@ -34,7 +34,9 @@
     "featureSoonOpen": "「",
     "featureSoonClose": "」기능은 개발 중입니다. 기대해 주세요.",
     "cardDubTitle": "자막 더빙",
-    "cardDubDesc": "자막 텍스트를 음성으로 합성해 새 오디오 트랙으로 영상에 넣습니다"
+    "cardDubDesc": "자막 텍스트를 음성으로 합성해 새 오디오 트랙으로 영상에 넣습니다",
+    "cardImgconvTitle": "이미지 변환",
+    "cardImgconvDesc": "WebP / JPG / PNG / ICO 등 이미지 형식 간에 상호 변환합니다"
   },
   "convert": {
     "title": "오디오/비디오 변환 - FFGui",
@@ -533,6 +535,7 @@
   "main": {
     "dialog": {
       "pickMedia": "미디어 파일 선택",
+      "pickImages": "이미지 파일 선택",
       "pickDirectory": "출력 폴더 선택",
       "pickSubtitle": "자막 파일 선택",
       "saveFrame": "이미지로 저장",
@@ -541,6 +544,7 @@
       "pickDiscFolder": "추출된 디스크 폴더 선택",
       "pickKeydb": "KEYDB 키 파일 선택",
       "filterMedia": "미디어 파일",
+      "filterImages": "이미지 파일",
       "filterSubtitle": "자막 파일",
       "filterAllFiles": "모든 파일",
       "filterPng": "PNG 이미지",
@@ -589,7 +593,10 @@
       "recordNoVideo": "녹화 파일에 비디오 스트림이 없어 MP4로 변환할 수 없습니다",
       "captureFrameFailed": "프레임 캡처에 실패했습니다. 해당 시점에 화면이 있는지 확인하세요",
       "recordBusy": "이 출력 파일은 이미 녹화 중입니다. 먼저 중지한 후 다시 시작하세요",
-      "recordStreamMissing": "녹화 출력 스트림이 없습니다(녹화가 끝났거나 시작되지 않음)"
+      "recordStreamMissing": "녹화 출력 스트림이 없습니다(녹화가 끝났거나 시작되지 않음)",
+      "imgconvFormat": "지원하지 않는 이미지 형식입니다",
+      "imgconvQuality": "잘못된 품질 단계입니다",
+      "imgconvNoInput": "변환할 이미지 파일이 없습니다"
     },
     "warn": {
       "coverUnsupported": "이 출력 형식은 커버 아트 보존이 아직 구현되지 않았습니다. 커버가 필요하면 MP3, M4A, FLAC을 선택하세요"
@@ -961,5 +968,17 @@
       "french": "프랑스어",
       "russian": "러시아어"
     }
+  },
+  "imgconv": {
+    "title": "이미지 변환 - FFGui",
+    "heading": "이미지 변환",
+    "secSource": "원본 이미지",
+    "btnAddFiles": "이미지 추가",
+    "btnClear": "비우기",
+    "fileEmpty": "아직 이미지가 없습니다. 「이미지 추가」를 클릭하거나 이미지 파일을 여기로 끌어다 놓으세요",
+    "labelFormat": "대상 형식",
+    "labelQuality": "품질(JPG / WebP 전용)",
+    "btnStart": "변환 시작",
+    "hint": "WebP / JPG / PNG / ICO / BMP / GIF / TIF / TGA 형식 간에 상호 변환합니다. 애니메이션 GIF/WebP는 첫 프레임을 사용하고, ICO는 256×256 이내로 자동 축소합니다. 기존 파일은 자동으로 피하고 덮어쓰지 않습니다."
   }
 }

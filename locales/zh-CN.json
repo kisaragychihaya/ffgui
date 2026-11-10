@@ -29,6 +29,8 @@
     "cardDiscDesc": "抓取 DVD / 蓝光标题，或从音乐 CD 抓取 FLAC 音轨",
     "cardDubTitle": "字幕配音",
     "cardDubDesc": "将字幕文本合成为语音，作为新音轨混入视频",
+    "cardImgconvTitle": "图片转换",
+    "cardImgconvDesc": "在 WebP / JPG / PNG / ICO 等图片格式之间互转",
     "clearCache": "清除硬件信息缓存",
     "clearCacheTip": "删除 ffmpeg 能力探测缓存（硬件加速 / 编码器），下次进入转码页时重新检测",
     "cacheCleared": "已清除，将重新检测",
@@ -652,6 +654,7 @@
   "main": {
     "dialog": {
       "pickMedia": "选择音视频文件",
+      "pickImages": "选择图片文件",
       "pickDirectory": "选择输出目录",
       "pickSubtitle": "选择字幕文件",
       "saveFrame": "另存为图像",
@@ -660,6 +663,7 @@
       "pickDiscFolder": "选择已提取的光盘目录",
       "pickKeydb": "选择 KEYDB 密钥库",
       "filterMedia": "音视频文件",
+      "filterImages": "图片文件",
       "filterSubtitle": "字幕文件",
       "filterAllFiles": "所有文件",
       "filterPng": "PNG 图像",
@@ -708,7 +712,10 @@
       "recordNoVideo": "录制文件中没有视频流，无法转 MP4",
       "captureFrameFailed": "抓帧失败，请检查该时间点是否存在画面",
       "recordBusy": "该输出文件已在录制中，请先停止后再开始",
-      "recordStreamMissing": "录制输出流不存在（录制已结束或未开始）"
+      "recordStreamMissing": "录制输出流不存在（录制已结束或未开始）",
+      "imgconvFormat": "不支持的图片格式",
+      "imgconvQuality": "非法的质量档位",
+      "imgconvNoInput": "没有可转换的图片文件"
     },
     "warn": {
       "coverUnsupported": "此输出格式尚未实现封面保留；需要封面时请选择 MP3、M4A 或 FLAC"
@@ -961,5 +968,17 @@
       "french": "法语",
       "russian": "俄语"
     }
+  },
+  "imgconv": {
+    "title": "图片转换 - FFGui",
+    "heading": "图片转换",
+    "secSource": "源图片",
+    "btnAddFiles": "添加图片",
+    "btnClear": "清空",
+    "fileEmpty": "尚未添加图片，点击「添加图片」或将图片文件拖拽到此处",
+    "labelFormat": "目标格式",
+    "labelQuality": "质量（仅 JPG / WebP）",
+    "btnStart": "开始转换",
+    "hint": "支持 WebP / JPG / PNG / ICO / BMP / GIF / TIF / TGA 互转；GIF/WebP 动图取首帧；ICO 自动缩放到 256×256 以内；已有文件自动避让，不覆盖。"
   }
 }

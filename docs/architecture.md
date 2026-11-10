@@ -9,7 +9,13 @@ index.js            主进程入口：BrowserWindow 1080x720（contextIsolation:
                     nodeIntegration: false），ready 后依次调用 main/ffmpeg.registerIpc()、
                     main/disc.registerDiscIpc()、main/theme（initTheme + registerThemeIpc）；
                     开发模式自动开 DevTools，打包后拦截 devtools-opened 强制关闭
-main/ffmpeg.js      主进程核心，见下节
+main/ffmpeg.js      主进程核心（新增导出 runFfmpegTask / buildOutputPath / resetCancel /
+                    isCancelled，供图片互转复用 spawn 进度解析、输出命名与取消标记），见下节
+main/imgconv.js     图片格式互转（WebP/JPG/PNG/ICO/BMP/GIF/TIF/TGA，动图取首帧）：逐文件
+                    复用 ffmpeg 的任务执行器，注册 ffgui:pickImageFiles / ffgui:imgconv /
+                    ffgui:imgconv-cancel，事件通道 ffgui:imgconv-event；buildImageArgs 按格式
+                    选编码器与画质档，jpg/png/bmp/tif/tga 单文件输出传 -update 1，ico 先 scale
+                    到 256 边长并用 bmp 编码。输出只传 -n 防覆盖，任务无时长按完成数推进进度。
 main/disc.js        光盘抓取编排（Rust 侧车 + 内部 FFmpeg 转码）。注册 ffgui:disc-pick-source /
                     disc-pick-keydb / disc-list-drives / disc-probe / disc-start / disc-cancel，
                     事件通道 ffgui:disc-event；同时只允许一个 disc 任务。侧车（native/ffgui-disc）
@@ -108,7 +114,8 @@ main/i18n.js        界面多语言：加载 locales/<lng>.json 词典，t() 支
                     ffgui:language-set（校验 → 持久化 → 广播 ffgui:language-changed，含新词典）
 preload/preload.js  contextBridge 暴露 window.ffgui：platform、versions、getCapabilities、
                     clearCapsCache、pickMediaFiles、pickDirectory、getPathForFile、convert、
-                    cancelConvert、onConvertEvent、probeMedia、merge、pickSubtitle、
+                    cancelConvert、onConvertEvent、pickImageFiles、imgConvert、
+                    cancelImgConvert、onImgConvertEvent、probeMedia、merge、pickSubtitle、
                     probeSubtitle、clip、makePreview、captureFrame、recordPickOutput、
                     recordStart、recordWriteChunk、recordFinish、recordDiscard、recordRemux、
                     getDesktopSources、prepareDesktopSource、pathToFileUrl、getTheme、setTheme、
@@ -118,7 +125,8 @@ preload/preload.js  contextBridge 暴露 window.ffgui：platform、versions、ge
                     cdReleaseTracks、cdStart、cdCancel、onCdEvent。除主题、语言与光盘 /
                     CD 抓轨外与主进程 IPC 同名；新增 IPC 只在此暴露最小 API
 html/*.html         index（首页导航卡片 + 清除硬件信息缓存按钮）、convert、merge、clip、crop、
-                    record、disc（统一光盘页，手动选「视频光盘 / 音乐 CD」动态切换）、dub。
+                    record、disc（统一光盘页，手动选「视频光盘 / 音乐 CD」动态切换）、dub、imgconv
+                    （图片互转：源图片队列 + 目标格式/画质/输出目录 + 进度与日志）。
                     CSP 统一为 default-src 'self'; style-src 'self';
                     script-src 'self'；clip/crop/record 额外放行 media-src 'self' blob: file:，
                     record 另放行 img-src 'self' data:（来源缩略图）
@@ -136,7 +144,7 @@ html/js/theme.js    在 i18n.js 之后、各页面脚本之前加载：监听 ma
                     theme.tipSystem/tipLight/tipDark）
 locales/<lng>.json  五个语言的界面词典（zh-CN / zh-TW / en / ja / ko，zh-CN 为回退与源文案）。
                     嵌套 JSON，键用点路径，命名空间与页面同名：common、theme、lang、home、
-                    convert、merge、clip、crop、record、disc、cd、dub、main（主进程报错/
+                    convert、merge、clip、crop、record、disc、cd、dub、imgconv、main（主进程报错/
                     对话框标题）。主进程与渲染层共用同一份文件；五语言键集合必须一致
                     （scripts/i18n.test.cjs 校验）
 html/js/convert.js  转码页：候选格式/编码器清单硬编码，按主进程探测结果过滤后填下拉框；设备预设
@@ -187,6 +195,10 @@ html/js/dub.js      字幕配音页：载入字幕 → 选发音语言 / 说话�
                     勾选后可用，输入值在失焦时按边界钳制写回）；说话人列表取
                     status().speakers（缺省用本文件兜底常量），文案走 locales 的 dub 命名空间，
                     能力全部经 window.ffgui（不碰 Node 与文件系统）
+html/js/imgconv.js  图片互转页：多选/拖拽添加图片并按扩展名过滤，目标格式与画质档下拉
+                    （仅 jpg/webp 启用画质），提交 imgConvert 的 job 并按 onImgConvertEvent
+                    刷新逐文件状态、进度条与日志；取消走 cancelImgConvert，输出目录可留空。
+                    静态文案走 imgconv 命名空间，语言切换时重刷空态、状态文本与移除按钮标题
 html/css/style.css  全部页面共用样式
 bin/                内置 ffmpeg。Windows 只带 ffmpeg.exe 单文件（约 140–210MB，ffprobe 未被
                     使用故不带），打包后到 resources/ 根目录（getFfmpegPath 优先
@@ -273,6 +285,9 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
   file-warning / file-error；转码、合并、截取、预览、录屏转 MP4 共用。取消经
   `ffgui:cancelConvert` → `cancelCurrentTask` 置位并 kill 子进程，close 回调里删除本次新产生
   的半成品 output（任务启动前已存在的文件不删）
+- **新导出**：`runFfmpegTask`、`buildOutputPath`、`resetCancel`、`isCancelled` 供
+  `main/imgconv.js` 复用 spawn/进度解析、输出避让与共享取消标记；图片任务走独立的
+  `ffgui:imgconv-event` 事件频道，取消仍调 `cancelCurrentTask`
 - **设备预设**（`job.devicePreset`）：主进程由 `normalizeConvertJob` 按 `DEVICE_PRESETS` 表
   二次落实（不能被旧表单值覆盖，须在分配输出扩展名前调用），每个预设锁定 格式/编码器/
   Profile/Level/位深/帧率上限/分辨率/VBV 码率三件套/音频码率/声道/采样率；渲染层 convert.js
@@ -357,6 +372,10 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
   makePreview / captureFrame / recordPickOutput / recordStart / recordWriteChunk /
   recordFinish / recordDiscard / recordRemux / getDesktopSources / prepareDesktopSource`
   （合并、截取、预览、录屏转 MP4 的进度与取消均复用 convert 的事件与 IPC）
+- **图片互转 IPC handler**（`main/imgconv.js`）：`ffgui:pickImageFiles`（图片多选对话框）/
+  `ffgui:imgconv`（批量转换）/ `ffgui:imgconv-cancel`（复用 `cancelCurrentTask`）；
+  事件通道 `ffgui:imgconv-event`，preload 对应 pickImageFiles / imgConvert /
+  cancelImgConvert / onImgConvertEvent
 
 ## 音轨与输出规则（修复后）
 

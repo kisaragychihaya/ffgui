@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-i18n-title="imgconv.title">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self'; script-src 'self'" />
+  <title>图片格式互转 - FFGui</title>
+  <link rel="icon" href="../assets/imgs/icon.ico" type="image/x-icon" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <main class="view">
+    <header class="feature-header">
+      <button id="btn-back" class="btn-back" type="button" data-i18n="common.backHome">← 返回首页</button>
+      <h2 data-i18n="imgconv.heading">图片格式互转</h2>
+    </header>
+
+    <!-- 源图片列表（支持拖拽添加） -->
+    <section class="panel" id="file-panel">
+      <div class="panel-header">
+        <h3 data-i18n="imgconv.secSource">源图片</h3>
+        <div class="panel-actions">
+          <button id="btn-add-files" class="btn" type="button" data-i18n="imgconv.btnAddFiles">添加图片</button>
+          <button id="btn-clear-files" class="btn btn-plain" type="button" data-i18n="imgconv.btnClear">清空</button>
+        </div>
+      </div>
+      <ul id="file-list" class="file-list">
+        <li class="file-list-empty" data-i18n="imgconv.fileEmpty">尚未添加图片，点击「添加图片」或将图片文件拖拽到此处</li>
+      </ul>
+    </section>
+
+    <!-- 输出参数 -->
+    <section class="panel">
+      <div class="panel-header">
+        <h3 data-i18n="convert.secOutput">输出设置</h3>
+      </div>
+      <div class="form-grid">
+        <label class="form-item">
+          <span class="form-label" data-i18n="imgconv.labelFormat">目标格式</span>
+          <select id="sel-format">
+            <option value="webp">WEBP</option>
+            <option value="jpg">JPG</option>
+            <option value="png">PNG</option>
+            <option value="ico">ICO</option>
+            <option value="bmp">BMP</option>
+            <option value="gif">GIF</option>
+            <option value="tif">TIF</option>
+            <option value="tga">TGA</option>
+          </select>
+        </label>
+        <label class="form-item" id="item-quality">
+          <span class="form-label" data-i18n="imgconv.labelQuality">质量</span>
+          <select id="sel-quality">
+            <option value="high" data-i18n="convert.qualityHigh">高质量</option>
+            <option value="medium" selected data-i18n="convert.qualityMedium">标准</option>
+            <option value="low" data-i18n="convert.qualityLow">小体积</option>
+          </select>
+        </label>
+        <label class="form-item form-item-dir">
+          <span class="form-label" data-i18n="convert.labelOutdir">输出目录</span>
+          <span class="dir-picker">
+            <input id="input-outdir" type="text" readonly
+                   data-i18n-attr="placeholder:convert.phOutdir" placeholder="与源文件相同" />
+            <button id="btn-pick-dir" class="btn" type="button" data-i18n="convert.btnBrowse">浏览…</button>
+          </span>
+        </label>
+      </div>
+      <p class="caps-info" data-i18n="imgconv.hint">输出与源图片同目录时会自动避开已有文件，不会覆盖。</p>
+    </section>
+
+    <!-- 进度与操作 -->
+    <section class="panel">
+      <div class="convert-actions">
+        <button id="btn-start" class="btn btn-primary" type="button" disabled data-i18n="imgconv.btnStart">开始转换</button>
+        <button id="btn-cancel" class="btn btn-danger hidden" type="button" data-i18n="common.cancel">取消</button>
+        <span id="status-text" class="status-text"></span>
+      </div>
+      <div class="progress-track">
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
+      <pre id="log-area" class="log-area hidden"></pre>
+    </section>
+  </main>
+
+  <script src="js/i18n.js"></script>
+  <script src="js/theme.js"></script>
+  <script src="js/imgconv.js"></script>
+</body>
+</html>

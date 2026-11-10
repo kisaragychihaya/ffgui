@@ -12,7 +12,7 @@ const vm = require('node:vm');
 
 const repo = path.resolve(__dirname, '..');
 const LANGS = ['zh-CN', 'zh-TW', 'en', 'ja', 'ko'];
-const PAGES = ['index', 'convert', 'merge', 'clip', 'crop', 'record', 'disc', 'dub'];
+const PAGES = ['index', 'convert', 'merge', 'clip', 'crop', 'record', 'disc', 'dub', 'imgconv'];
 // 页面 -> 页面脚本清单：默认 html/js/<page>.js；disc.html 合并光盘抓取 + CD 抓轨，
 // 拆成 dvd / cd 两个功能文件 + type 类型切换控制器
 const PAGE_SCRIPTS = { disc: ['disc.dvd.js', 'disc.cd.js', 'disc.type.js'] };
@@ -89,7 +89,7 @@ test('词典：页面与脚本引用的键全部存在，且无未使用的键',
     + fs.readFileSync(path.join(repo, 'html/js/i18n.js'), 'utf8')
     // 主进程文案（报错 / 对话框标题 / 筛选器名）；新模块不存在时跳过，
     // 存在即计入语料，其词典键必须被真正引用
-    + ['main/ffmpeg.js', 'main/disc.js', 'main/cdrip.js', 'main/i18n.js', 'main/dub.js']
+    + ['main/ffmpeg.js', 'main/disc.js', 'main/cdrip.js', 'main/i18n.js', 'main/dub.js', 'main/imgconv.js']
       .map((file) => path.join(repo, file))
       .filter((file) => fs.existsSync(file))
       .map((file) => fs.readFileSync(file, 'utf8')).join('\n');

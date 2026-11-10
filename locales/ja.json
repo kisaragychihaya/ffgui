@@ -34,7 +34,9 @@
     "featureSoonOpen": "「",
     "featureSoonClose": "」機能は開発中です。もうしばらくお待ちください。",
     "cardDubTitle": "字幕吹き替え",
-    "cardDubDesc": "字幕テキストを音声に合成し、新しい音声トラックとして動画に追加します"
+    "cardDubDesc": "字幕テキストを音声に合成し、新しい音声トラックとして動画に追加します",
+    "cardImgconvTitle": "画像の変換",
+    "cardImgconvDesc": "WebP / JPG / PNG / ICO などの画像形式に相互変換します"
   },
   "convert": {
     "title": "音声・動画の変換 - FFGui",
@@ -533,6 +535,7 @@
   "main": {
     "dialog": {
       "pickMedia": "メディアファイルを選択",
+      "pickImages": "画像ファイルを選択",
       "pickDirectory": "出力フォルダーを選択",
       "pickSubtitle": "字幕ファイルを選択",
       "saveFrame": "画像として保存",
@@ -541,6 +544,7 @@
       "pickDiscFolder": "展開済みのディスクフォルダーを選択",
       "pickKeydb": "KEYDB キーファイルを選択",
       "filterMedia": "メディアファイル",
+      "filterImages": "画像ファイル",
       "filterSubtitle": "字幕ファイル",
       "filterAllFiles": "すべてのファイル",
       "filterPng": "PNG 画像",
@@ -589,7 +593,10 @@
       "recordNoVideo": "録画ファイルに映像ストリームがないため、MP4 に変換できません",
       "captureFrameFailed": "フレームのキャプチャに失敗しました。その時点に映像があるか確認してください",
       "recordBusy": "この出力ファイルは録画中です。停止してから開始してください",
-      "recordStreamMissing": "録画出力ストリームがありません（録画が終了済みか未開始です）"
+      "recordStreamMissing": "録画出力ストリームがありません（録画が終了済みか未開始です）",
+      "imgconvFormat": "未対応の画像形式です",
+      "imgconvQuality": "画質レベルが無効です",
+      "imgconvNoInput": "変換できる画像ファイルがありません"
     },
     "warn": {
       "coverUnsupported": "この出力形式ではカバー画像の保持が未対応です。カバーが必要な場合は MP3、M4A、FLAC を選択してください"
@@ -961,5 +968,17 @@
       "french": "フランス語",
       "russian": "ロシア語"
     }
+  },
+  "imgconv": {
+    "title": "画像の変換 - FFGui",
+    "heading": "画像の変換",
+    "secSource": "元画像",
+    "btnAddFiles": "画像を追加",
+    "btnClear": "クリア",
+    "fileEmpty": "画像がありません。「画像を追加」をクリックするか、画像ファイルをここにドラッグしてください",
+    "labelFormat": "出力形式",
+    "labelQuality": "画質（JPG / WebP のみ）",
+    "btnStart": "変換を開始",
+    "hint": "WebP / JPG / PNG / ICO / BMP / GIF / TIF / TGA の相互変換に対応します。アニメーション GIF/WebP は先頭フレームを使用し、ICO は 256×256 以内に自動縮小します。既存ファイルは自動的に避け、上書きしません。"
   }
 }

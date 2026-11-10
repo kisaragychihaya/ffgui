@@ -48,6 +48,10 @@
       window.location.href = 'dub.html';
       return;
     }
+    if (feature === 'imgconv') {
+      window.location.href = 'imgconv.html';
+      return;
+    }
     if (!FEATURE_KEYS[feature]) return;
     currentFeature = feature;
     renderFeatureName();

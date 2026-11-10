@@ -34,7 +34,9 @@
     "featureSoonOpen": "“",
     "featureSoonClose": "” is under development. Stay tuned.",
     "cardDubTitle": "Subtitle dubbing",
-    "cardDubDesc": "Synthesize subtitle text into speech and mix it into the video as a new track"
+    "cardDubDesc": "Synthesize subtitle text into speech and mix it into the video as a new track",
+    "cardImgconvTitle": "Convert Images",
+    "cardImgconvDesc": "Convert between WebP / JPG / PNG / ICO and other image formats"
   },
   "convert": {
     "title": "Convert Audio/Video - FFGui",
@@ -533,6 +535,7 @@
   "main": {
     "dialog": {
       "pickMedia": "Select media files",
+      "pickImages": "Select image files",
       "pickDirectory": "Select output folder",
       "pickSubtitle": "Select subtitle file",
       "saveFrame": "Save frame as image",
@@ -541,6 +544,7 @@
       "pickDiscFolder": "Select extracted disc folder",
       "pickKeydb": "Select KEYDB file",
       "filterMedia": "Media files",
+      "filterImages": "Image files",
       "filterSubtitle": "Subtitle files",
       "filterAllFiles": "All files",
       "filterPng": "PNG image",
@@ -589,7 +593,10 @@
       "recordNoVideo": "The recording has no video stream and cannot be converted to MP4",
       "captureFrameFailed": "Failed to capture the frame. Check that there is a picture at that time",
       "recordBusy": "This output file is already being recorded. Stop it before starting again",
-      "recordStreamMissing": "The recording output stream does not exist (recording has ended or not started)"
+      "recordStreamMissing": "The recording output stream does not exist (recording has ended or not started)",
+      "imgconvFormat": "Unsupported image format",
+      "imgconvQuality": "Invalid quality level",
+      "imgconvNoInput": "There are no images to convert"
     },
     "warn": {
       "coverUnsupported": "Cover art preservation is not implemented for this output format; choose MP3, M4A or FLAC if you need the cover"
@@ -961,5 +968,17 @@
       "french": "French",
       "russian": "Russian"
     }
+  },
+  "imgconv": {
+    "title": "Convert Images - FFGui",
+    "heading": "Convert Images",
+    "secSource": "Source images",
+    "btnAddFiles": "Add images",
+    "btnClear": "Clear",
+    "fileEmpty": "No images yet — click “Add images” or drag image files here",
+    "labelFormat": "Target format",
+    "labelQuality": "Quality (JPG / WebP only)",
+    "btnStart": "Start conversion",
+    "hint": "Convert between WebP / JPG / PNG / ICO / BMP / GIF / TIF / TGA; animated GIF/WebP uses the first frame; ICO is scaled down to fit within 256×256; existing files are avoided and never overwritten."
   }
 }

@@ -4,7 +4,7 @@
 
 ## 项目概览
 
-FFGui 是基于 Electron 的桌面音视频工具箱（GUI for FFmpeg），LGPL-3.0-or-later，界面多语言（zh-CN 为源文案）。七个功能：音视频转码、合并、截取（无损切 + 抓帧）、画面裁剪（可视化画框）、屏幕录制、光盘抓取（DVD/蓝光）、CD 抓轨（音乐 CD → FLAC）；其中光盘抓取与 CD 抓轨共用一个入口页（disc.html 手动选类型动态切换，结构见 docs/architecture.md）。
+FFGui 是基于 Electron 的桌面音视频工具箱（GUI for FFmpeg），LGPL-3.0-or-later，界面多语言（zh-CN 为源文案）。八个功能：音视频转码、合并、截取（无损切 + 抓帧）、画面裁剪（可视化画框）、屏幕录制、光盘抓取（DVD/蓝光）、CD 抓轨（音乐 CD → FLAC）、字幕配音、图片格式互转（WebP/JPG/PNG/ICO/BMP/GIF/TIF/TGA 互转，动图取首帧）；其中光盘抓取与 CD 抓轨共用一个入口页（disc.html 手动选类型动态切换，结构见 docs/architecture.md）。
 
 内置 ffmpeg 在主进程完成实际处理：能力探测（硬件加速/编码器/封装，带缓存）、文件对话框、spawn 子进程解析 `-progress`；渲染进程是纯静态 HTML/CSS/JS（原生 IIFE，无框架/无 TS/无打包器）。录屏采集与编码在渲染进程（系统选择器 + MediaRecorder），仅结果转 MP4 走 ffmpeg。
 
@@ -13,7 +13,7 @@ FFGui 是基于 Electron 的桌面音视频工具箱（GUI for FFmpeg），LGPL-
 
 ## 目录地图（速览）
 
-- `index.js` + `main/*.js` — 主进程：ffmpeg.js 核心（探测/转码/合并/截取/录屏），disc.js + Rust 侧车（光盘），cdrip.js（CD），dub.js（TTS 配音），theme.js / i18n.js
+- `index.js` + `main/*.js` — 主进程：ffmpeg.js 核心（探测/转码/合并/截取/录屏），disc.js + Rust 侧车（光盘），cdrip.js（CD），imgconv.js（图片互转），dub.js（TTS 配音），theme.js / i18n.js
 - `preload/preload.js` — contextBridge，渲染层唯一能力入口 `window.ffgui`，新增 IPC 只暴露最小 API
 - `html/` — 渲染层页面与脚本；`locales/` — 五语言词典；每个页面最先加载 `html/js/i18n.js` 再 `theme.js`
 - `native/` — Rust 光盘侧车（ffgui-disc）与 TTS 引擎源码子模块（qwentts.cpp，需 --recurse-submodules）
@@ -46,7 +46,7 @@ FFGui 是基于 Electron 的桌面音视频工具箱（GUI for FFmpeg），LGPL-
 ## 构建与测试速查
 
 - `npm install` / `npm start`（开发）/ `npm run package` / `npm run make`（NSIS 安装包）
-- `npm test` — regression + i18n + cdrip + cd-ui（需 PATH 有 ffmpeg/ffprobe 或 `FFMPEG` / `FFPROBE` 环境变量）
+- `npm test` — regression + i18n + cdrip + cd-ui + dub + imgconv（需 PATH 有 ffmpeg/ffprobe 或 `FFMPEG` / `FFPROBE` 环境变量）
 - 光盘侧车与页面专项：`node --test scripts/disc.test.cjs scripts/disc-sidecar.test.cjs scripts/disc-ui.test.cjs`；Rust 侧车 `cd native/ffgui-disc && cargo test --locked`
 - TTS 引擎编译：`node scripts/build-tts.cjs [--backend vulkan|cpu] [--arch x64|arm64] [--no-native]`（分发构建必须 `--no-native`）
 - 发布与 CI 细节见 **docs/build-release.md**；测试体系、手工验证清单、已知限制见 **docs/testing.md**

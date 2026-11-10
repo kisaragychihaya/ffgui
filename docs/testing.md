@@ -5,8 +5,9 @@
 ## 测试方式
 
 `npm test` 跑 `scripts/regression.test.cjs` + `scripts/i18n.test.cjs` + `scripts/cdrip.test.cjs`
-+ `scripts/cd-ui.test.cjs`，生成独立临时媒体并自动清理；字幕配音（dub）的专项测试按同一命名
-约定是 `scripts/dub.test.cjs`（主进程：引擎路径解析、ffmpeg 命令组装、字幕条目解析与时间轴
++ `scripts/cd-ui.test.cjs` + `scripts/dub.test.cjs` + `scripts/imgconv.test.cjs`，生成独立
+临时媒体并自动清理；字幕配音（dub）的专项测试是 `scripts/dub.test.cjs`（主进程：引擎路径解析、
+ffmpeg 命令组装、字幕条目解析与时间轴
 换算、模型下载的 https/aria2 两条路径与内置 aria2c 路径解析——aria2 用注入的假 spawn，
 默认注入 `aria2: false` 避免真探测 PATH；请求体断言 voice = 所选说话人、seed 固定 0，
 DEFAULT_SPEAKERS 十项与 normalizeSpeaker 的归一（大小写不敏感、非字符串/白名单外回默认
@@ -34,7 +35,13 @@ Rust 侧车 `cd native/ffgui-disc && cargo test --locked`。`disc-ui.test.cjs` �
 `regression.test.cjs`、`disc.test.cjs` 用 vm 加载主进程文件时，
 `require` 桩需把 `'./i18n'` 映射到 `main/i18n.js`（否则沙箱里解析不到同目录模块）；
 `cdrip.test.cjs` 还需把 `'./ffmpeg'` 映射到返回假路径的桩，并 mock
-`child_process.spawn`（否则测试会去调真实 ffmpeg / 光驱）。
+`child_process.spawn`（否则测试会去调真实 ffmpeg / 光驱）；
+`imgconv.test.cjs` 同样用 vm 加载 `main/imgconv.js`，注入假 `./i18n`（记录主进程词典键）、
+假 `./ffmpeg`（runFfmpegTask / buildOutputPath / 取消标记桩）、假 electron（收集
+ipcMain.handle 与文件对话框）和假 `child_process.spawn`，断言八种格式的编码器、
+画质档、`-frames:v 1` / `-n` / `-progress pipe:1` / 输出路径、-update 与 ico 缩放参数，
+并覆盖批量任务、取消、IPC 注册；最后一个用例用 `FFMPEG` 或 `bin/ffmpeg.exe` 实跑
+lavfi PNG → ICO，验证文件存在且能按 ico 解码（没有 ffmpeg 时自动跳过）。
 多语言改动后另需 `npm start` 逐页切换语言核对（含主进程报错与文件对话框标题）。手工验证：
 `npm start` 后用 `test_media/` 示例文件走一遍转码（含拖拽、取消、进度），观察主进程 `[ffgui]` /
 `[ffmpeg]` 日志；录屏页验证录制（含系统声音/麦克风勾选、取消清理半成品、转 MP4）；
@@ -49,7 +56,9 @@ Windows 是 `resources/aria2/aria2c.exe`，macOS 是 `resources/bin/aria2/aria2c
 aria2c 时，应自动回退内置 https 下载）、
 逐条合成试听、混流输出与取消清理（需 `bin/tts/` 中有 tts-server 或设置 `FFGUI_TTS_SERVER`）、
 「混音输出」勾选后成品只剩一条音轨（播放器里切不到原声）、配音音量能听出变化（-30 dB 几乎只剩
-原声，+12 dB 配音明显压过原声）、未勾选时音量输入应禁用且提示行切回「原音轨保留」那段。
+原声，+12 dB 配音明显压过原声）、未勾选时音量输入应禁用且提示行切回「原音轨保留」那段；
+图片互转页验证八种格式互转（含动图只取首帧、jpg/webp 画质档、ico 自动限 256 边长）、
+批量队列与不覆盖已有文件、取消后不残留半成品。
 
 ## 已知问题
 

@@ -41,6 +41,8 @@ app.whenReady().then(() => {
   i18n.registerI18nIpc();
   // 注册 ffmpeg 能力探测 / 文件选择 / 转换任务等 IPC
   require('./main/ffmpeg').registerIpc();
+  // 图片格式互转：复用 ffmpeg 的能力探测与任务执行器，独立注册 IPC
+  require('./main/imgconv').registerImgconvIpc();
   // 光盘抓取：Rust 侧车 + 内部 FFmpeg 转码编排
   require('./main/disc').registerDiscIpc();
   // CD 抓轨：libcdio 读取音频 CD，FFmpeg 编码 FLAC 无损

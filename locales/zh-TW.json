@@ -34,7 +34,9 @@
     "featureSoonOpen": "「",
     "featureSoonClose": "」功能開發中，敬請期待。",
     "cardDubTitle": "字幕配音",
-    "cardDubDesc": "將字幕文字合成為語音，作為新音軌混入影片"
+    "cardDubDesc": "將字幕文字合成為語音，作為新音軌混入影片",
+    "cardImgconvTitle": "圖片轉換",
+    "cardImgconvDesc": "在 WebP / JPG / PNG / ICO 等圖片格式之間互轉"
   },
   "convert": {
     "title": "影音轉檔 - FFGui",
@@ -533,6 +535,7 @@
   "main": {
     "dialog": {
       "pickMedia": "選擇影音檔案",
+      "pickImages": "選擇圖片檔案",
       "pickDirectory": "選擇輸出資料夾",
       "pickSubtitle": "選擇字幕檔案",
       "saveFrame": "另存為圖片",
@@ -541,6 +544,7 @@
       "pickDiscFolder": "選擇已擷取的光碟目錄",
       "pickKeydb": "選擇 KEYDB 金鑰庫",
       "filterMedia": "影音檔案",
+      "filterImages": "圖片檔案",
       "filterSubtitle": "字幕檔案",
       "filterAllFiles": "所有檔案",
       "filterPng": "PNG 圖片",
@@ -589,7 +593,10 @@
       "recordNoVideo": "錄製檔案中沒有視訊串流，無法轉 MP4",
       "captureFrameFailed": "擷取影格失敗，請檢查該時間點是否有畫面",
       "recordBusy": "該輸出檔案已在錄製中，請先停止後再開始",
-      "recordStreamMissing": "錄製輸出串流不存在（錄製已結束或未開始）"
+      "recordStreamMissing": "錄製輸出串流不存在（錄製已結束或未開始）",
+      "imgconvFormat": "不支援的圖片格式",
+      "imgconvQuality": "無效的品質層級",
+      "imgconvNoInput": "沒有可轉換的圖片檔案"
     },
     "warn": {
       "coverUnsupported": "此輸出格式尚未實作封面保留；需要封面時請選擇 MP3、M4A 或 FLAC"
@@ -961,5 +968,17 @@
       "french": "法語",
       "russian": "俄語"
     }
+  },
+  "imgconv": {
+    "title": "圖片轉換 - FFGui",
+    "heading": "圖片轉換",
+    "secSource": "來源圖片",
+    "btnAddFiles": "新增圖片",
+    "btnClear": "清空",
+    "fileEmpty": "尚未新增圖片，點選「新增圖片」或將圖片檔案拖曳到此處",
+    "labelFormat": "目標格式",
+    "labelQuality": "品質（僅 JPG / WebP）",
+    "btnStart": "開始轉檔",
+    "hint": "支援 WebP / JPG / PNG / ICO / BMP / GIF / TIF / TGA 互轉；GIF/WebP 動圖取首幀；ICO 自動縮放至 256×256 以內；既有檔案會自動避開，不覆蓋。"
   }
 }

@@ -39,6 +39,16 @@ contextBridge.exposeInMainWorld('ffgui', {
     return () => ipcRenderer.removeListener('ffgui:convert-event', listener);
   },
 
+  // 图片格式互转（webp/jpg/png/ico/bmp/gif/tif/tga；独立事件频道，取消复用 ffmpeg 任务句柄）
+  pickImageFiles: () => ipcRenderer.invoke('ffgui:pickImageFiles'),
+  imgConvert: (job) => ipcRenderer.invoke('ffgui:imgconv', job),
+  cancelImgConvert: () => ipcRenderer.invoke('ffgui:imgconv-cancel'),
+  onImgConvertEvent: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('ffgui:imgconv-event', listener);
+    return () => ipcRenderer.removeListener('ffgui:imgconv-event', listener);
+  },
+
   // 合并任务（探测 + 拼接；进度事件复用 onConvertEvent，取消复用 cancelConvert）
   probeMedia: (files) => ipcRenderer.invoke('ffgui:probeMedia', files),
   merge: (job) => ipcRenderer.invoke('ffgui:merge', job),

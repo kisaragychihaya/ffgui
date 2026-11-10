@@ -333,7 +333,9 @@ jobs:
             out/make/**/FFGui-*-Setup.exe
 
   windows-arm64:
-    runs-on: windows-latest
+    # windows-11-arm 原生 ARM64 runner（公共仓库免费、已 GA）：原生编译免掉交叉工具链的坑
+    #（MSVC ARM 链接器配置、ring 汇编、PE 头校验等），且产物可直接执行冒烟
+    runs-on: windows-11-arm
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -347,15 +349,9 @@ jobs:
         with:
           node-version: 22
 
-      - name: 安装 Rust（含 ARM64 target）
+      # 原生 ARM64 runner 默认 host triple 即 aarch64-pc-windows-msvc，无需 targets 覆盖
+      - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-pc-windows-msvc
-
-      - name: 配置 MSVC ARM64 环境
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: arm64
 
       - name: 准备 clang（ring ARM64 汇编）
         shell: pwsh
@@ -371,37 +367,24 @@ jobs:
           }
           clang --version
 
-      - name: 指定 MSVC ARM64 链接器
+      - name: 构建光盘侧车
         shell: pwsh
         run: |
-          # Git for Windows 自带 /usr/bin/link.exe，会遮蔽 MSVC 链接器；
-          # 交叉链接必须显式指向 Hostx64\arm64\link.exe
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vs = & $vswhere -latest -products * -property installationPath
-          if (-not $vs) { throw '未找到 Visual Studio' }
-          $toolset = Get-ChildItem (Join-Path $vs 'VC\Tools\MSVC') -Directory |
-            Sort-Object Name -Descending | Select-Object -First 1
-          if (-not $toolset) { throw '未找到 MSVC 工具集' }
-          $linker = Join-Path $toolset.FullName 'bin\Hostx64\arm64\link.exe'
-          if (-not (Test-Path $linker)) { throw "未找到 ARM64 链接器：$linker" }
-          "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER=$linker" |
-            Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "ARM64 linker: $linker"
-
-      - name: 构建 ARM64 光盘侧车
-        shell: pwsh
-        run: |
-          cargo build --locked --release --manifest-path native/ffgui-disc/Cargo.toml --target aarch64-pc-windows-msvc
+          cargo build --locked --release --manifest-path native/ffgui-disc/Cargo.toml
           New-Item -ItemType Directory -Force bin/disc | Out-Null
-          Copy-Item native/ffgui-disc/target/aarch64-pc-windows-msvc/release/ffgui-disc.exe bin/disc/ffgui-disc.exe
-          $bytes = [System.IO.File]::ReadAllBytes("$PWD\bin\disc\ffgui-disc.exe")
-          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
-          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-          if ($machine -ne 0xAA64) { throw ('bin/disc/ffgui-disc.exe 不是 ARM64 二进制 (machine=0x{0:X4})' -f $machine) }
-          Write-Host 'ffgui-disc.exe 机器类型校验通过：ARM64'
+          Copy-Item native/ffgui-disc/target/release/ffgui-disc.exe bin/disc/ffgui-disc.exe
 
-      # TTS 产物缓存：源码 = qwentts.cpp 子模块固定 commit，本 job 构建参数固定（CPU/arm64），
-      # 命中即跳过整个交叉编译
+      # ARM64 Vulkan SDK 与 x64 同版本号发布（eden 等项目在用），
+      # 但 windows-arm64.txt 端点目前返回空，版本号复用 x64 的解析端点
+      - name: 解析 Vulkan SDK 版本
+        id: vulkan-sdk
+        shell: bash
+        run: |
+          version=$(curl -fsSL https://vulkan.lunarg.com/sdk/latest/windows.txt)
+          test -n "$version" || { echo '解析 Vulkan SDK latest 版本失败' >&2; exit 1; }
+          echo "version=$version" | tee -a "$GITHUB_OUTPUT"
+
+      # TTS 产物缓存：键含子模块 SHA + SDK 版本 + 构建脚本哈希，命中即跳过 SDK 安装与编译
       - name: 计算 TTS 缓存键
         id: tts-key
         shell: bash
@@ -415,9 +398,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: bin/tts
-          key: tts-v1-windows-arm64-cpu-${{ steps.tts-key.outputs.sha }}-${{ hashFiles('scripts/build-tts.cjs') }}
+          key: tts-v1-windows-arm64-vulkan-${{ steps.tts-key.outputs.sha }}-${{ steps.vulkan-sdk.outputs.version }}-${{ hashFiles('scripts/build-tts.cjs') }}
 
-      # 防污染校验：要求产物齐全且 .backend 标记为本 job 后端（cpu），否则转入正常构建
+      # 防污染校验：只接受主后端（vulkan）构建的完整产物（.backend 标记由构建步骤写入）
       - name: 校验 TTS 缓存产物
         id: tts-valid
         shell: bash
@@ -425,54 +408,140 @@ jobs:
           ok=false
           if [ "${{ steps.tts-cache.outputs.cache-hit }}" = "true" ] \
              && [ -f bin/tts/tts-server.exe ] \
-             && [ "$(cat bin/tts/.backend 2>/dev/null)" = "cpu" ]; then
+             && [ "$(cat bin/tts/.backend 2>/dev/null)" = "vulkan" ]; then
             ok=true
           fi
           echo "ok=$ok" | tee -a "$GITHUB_OUTPUT"
           echo "TTS 缓存有效：$ok"
 
-      # ARM64 只做 CPU 后端：Vulkan 交叉构建的工具链（glslc/SPIRV-Headers + arm64 链接）不稳。
-      # 未验证：-A ARM64 依赖 runner 装好 MSVC ARM64 工具集（现有 cargo/ffmpeg 步骤已依赖它）。
-      # 构建失败不阻断打包，但建出空 bin/tts/（避免 extraResource 指向不存在的路径）
-      - name: 构建 ARM64 TTS 引擎 tts-server（仅 CPU）
+      # TTS 缓存命中时无需 Vulkan SDK（不编译），安装包恢复/下载/保存/安装全部跳过。
+      # ARM64 SDK 是加分项：下载/carve/校验任何一步失败都只警告，TTS 构建回退 CPU 后端
+      - name: 恢复 Vulkan SDK 安装包缓存
+        if: steps.tts-valid.outputs.ok != 'true'
+        id: vulkan-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: vulkan_sdk_arm64.exe
+          key: vulkan-sdk-installer-windows-arm64-${{ steps.vulkan-sdk.outputs.version }}
+
+      - name: 下载 Vulkan SDK 安装包（ARM64）
+        if: steps.tts-valid.outputs.ok != 'true'
+        id: vulkan-download
+        shell: bash
+        run: |
+          if [ ! -s vulkan_sdk_arm64.exe ]; then
+            # ARM64 包可能不与 x64 同步发布；失败不阻断，TTS 回退 CPU
+            if ! curl -fsSL -o vulkan_sdk_arm64.exe \
+              "https://sdk.lunarg.com/sdk/download/${{ steps.vulkan-sdk.outputs.version }}/warm/vulkansdk-windows-ARM64-${{ steps.vulkan-sdk.outputs.version }}.exe"; then
+              echo '警告：ARM64 Vulkan SDK 下载失败（该版本可能未发布 ARM64 包），TTS 回退 CPU 后端'
+              rm -f vulkan_sdk_arm64.exe
+            fi
+          fi
+          ls -lh vulkan_sdk_arm64.exe 2>/dev/null || true
+          echo "downloaded=$(test -s vulkan_sdk_arm64.exe && echo true || echo false)" | tee -a "$GITHUB_OUTPUT"
+
+      - name: 保存 Vulkan SDK 安装包缓存
+        if: steps.tts-valid.outputs.ok != 'true' && steps.vulkan-cache.outputs.cache-hit != 'true' && steps.vulkan-download.outputs.downloaded == 'true'
+        # 缓存键不可变等异常不应拖垮 job（ARM64 SDK 只是加分项）
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: vulkan_sdk_arm64.exe
+          key: vulkan-sdk-installer-windows-arm64-${{ steps.vulkan-sdk.outputs.version }}
+
+      # carve 逻辑与 x64 相同（Qt IFW 打包格式一致）；ARM64 包的内部布局尚未实测，
+      # 三件套任一缺失只警告不失败。默认 bash 带 -e -o pipefail，整体包进 if 子壳容错
+      - name: 安装 Vulkan SDK ARM64（carve 内嵌组件）
+        if: steps.tts-valid.outputs.ok != 'true' && steps.vulkan-download.outputs.downloaded == 'true'
+        shell: bash
+        run: |
+          sdk_dir="$RUNNER_TEMP/VULKAN_SDK"
+          if (
+            set -e
+            mkdir -p "$sdk_dir"
+            # 主归档：Bin/ 工具（glslc、glslangValidator 等）
+            7z x -y vulkan_sdk_arm64.exe -o"$sdk_dir" > /dev/null
+            # 定位主归档末尾；awk 不许提前 exit（pipefail 下 7z 吃 SIGPIPE 会报 141）
+            outer_end=$(7z l -slt vulkan_sdk_arm64.exe | awk -F' = ' '
+              /^Offset = / { if (!done) o=$2; next }
+              o != "" && !done && /^Physical Size = / { print o + $2; done=1; o="" }')
+            test -n "$outer_end" || { echo '定位 Vulkan SDK 主归档失败' >&2; exit 1; }
+            # 主归档之后每个 7z magic 都是一个内嵌组件负载（Lib/Include/cmake…），
+            # 负载之间夹着 40 字节的 SHA-1 文本；逐个 carve 出来解到同一目录
+            magics=$(grep -abo $'\x37\x7a\xbc\xaf\x27\x1c' vulkan_sdk_arm64.exe |
+              cut -d: -f1 | awk -v end="$outer_end" '$1 > end')
+            prev=""; i=0; total=$(stat -c%s vulkan_sdk_arm64.exe)
+            for m in $magics "" ; do
+              [ -n "$prev" ] || { prev=$m; continue; }
+              end_off=$total
+              [ -n "$m" ] && end_off=$m
+              len=$((end_off - prev - 40))
+              dd if=vulkan_sdk_arm64.exe of=.vk-payload.7z iflag=skip_bytes,count_bytes skip=$prev count=$len 2> /dev/null
+              7z x -y .vk-payload.7z -o"$sdk_dir" > /dev/null 2>&1 || true
+              rm -f .vk-payload.7z
+              i=$((i + 1)); prev=$m
+            done
+            echo "carve 完成（$i 个内嵌负载）"
+            # ggml 三件套校验（ARM64 布局假定与 x64 一致，首次运行若失败则回退 CPU）
+            for f in Include/vulkan/vulkan.h Lib/vulkan-1.lib Lib/cmake/SPIRV-Headers/SPIRV-HeadersConfig.cmake Bin/glslc.exe; do
+              test -f "$sdk_dir/$f" || { echo "Vulkan SDK 布局异常，缺少 $f" >&2; exit 1; }
+            done
+          ); then
+            echo "VULKAN_SDK=$(cygpath -m "$sdk_dir")" | tee -a "$GITHUB_ENV"
+            cygpath -w "$sdk_dir/Bin" >> "$GITHUB_PATH"
+            du -sh "$sdk_dir"
+          else
+            echo '警告：ARM64 Vulkan SDK 解包/校验失败，TTS 回退 CPU 后端'
+            rm -rf "$sdk_dir"
+          fi
+          # 用完即删：不留仓库根目录，避免残留被打进 app.asar
+          rm -f vulkan_sdk_arm64.exe
+
+      # TTS 引擎（字幕配音）：原生 ARM64 上 Vulkan 优先，失败回退 CPU 并继续打包；
+      # 两者都失败只写警告并建空 bin/tts/，不阻断打包（字幕配音在运行时回退 PATH 查找）
+      - name: 构建 TTS 引擎 tts-server（Vulkan 优先，回退 CPU）
         if: steps.tts-valid.outputs.ok != 'true'
         id: tts-build
         shell: pwsh
         run: |
           # 先清掉缓存恢复的残留（校验未通过时才走到这），避免旧 dll 混进新产物
           Remove-Item -Recurse -Force bin/tts -ErrorAction SilentlyContinue
-          node scripts/build-tts.cjs --backend cpu --arch arm64 --no-native
+          # --no-native 在 win32+arm64 下被 build-tts.cjs 自动忽略（ggml 要求 MSVC ARM
+          # 必须 GGML_NATIVE=ON，且该路径不追加宿主专属指令）
+          node scripts/build-tts.cjs --backend vulkan --no-native
           $backend = ''
-          if ($LASTEXITCODE -eq 0) { $backend = 'cpu' }
+          if ($LASTEXITCODE -eq 0) {
+            $backend = 'vulkan'
+          } else {
+            Write-Warning 'Vulkan 版 tts-server 构建失败，回退 CPU 后端'
+            node scripts/build-tts.cjs --backend cpu --no-native --clean
+            if ($LASTEXITCODE -eq 0) { $backend = 'cpu' }
+          }
           if (-not $backend) {
-            Write-Warning 'ARM64 版 tts-server 构建失败，本次打包不含 TTS 引擎（字幕配音回退 PATH 查找）'
+            Write-Warning 'CPU 版 tts-server 也构建失败，本次打包不含 TTS 引擎（字幕配音回退 PATH 查找）'
             New-Item -ItemType Directory -Force bin/tts | Out-Null
           }
           if (Test-Path bin/tts/tts-server.exe) {
-            # runner 是 x64，无法执行 arm64 二进制，改为校验 PE 头机器类型（0xAA64 = ARM64）
-            $bytes = [System.IO.File]::ReadAllBytes("$PWD\bin\tts\tts-server.exe")
-            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
-            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-            if ($machine -ne 0xAA64) { throw ('bin/tts/tts-server.exe 不是 ARM64 二进制 (machine=0x{0:X4})' -f $machine) }
-            Write-Host 'tts-server.exe 机器类型校验通过：ARM64'
+            Get-Item bin/tts/tts-server.exe | Select-Object FullName, Length
           }
-          # 记录实际后端：缓存校验/保存都以此识别产物来源
+          # 记录实际后端：缓存校验/保存都以此识别回退产物
           if ($backend) {
             Set-Content -NoNewline -Path bin/tts/.backend -Value $backend
           }
           "backend=$backend" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          # 同 x64：构建失败不阻断打包，显式归零 $LASTEXITCODE（真正的错误已记录为警告）
+          # GitHub 的 pwsh 包装会在脚本末尾按 $LASTEXITCODE 退出，这里显式归零，
+          # 否则"构建失败但继续打包"会被当成步骤失败（真正的错误已由 Write-Warning 记录）
           exit 0
 
-      # 构建成功才写缓存（本 job 只有 cpu 一种后端，backend=cpu 即成功）
+      # 只有主后端（vulkan）构建成功才写缓存：回退的 CPU 产物绝不写入 vulkan 键
       - name: 保存 TTS 引擎产物缓存
         # continue-on-error：缓存不可变，同名键已存在时保存会报错，但产物本身已就绪
         continue-on-error: true
-        if: steps.tts-valid.outputs.ok != 'true' && steps.tts-build.outputs.backend == 'cpu'
+        if: steps.tts-valid.outputs.ok != 'true' && steps.tts-build.outputs.backend == 'vulkan'
         uses: actions/cache/save@v4
         with:
           path: bin/tts
-          key: tts-v1-windows-arm64-cpu-${{ steps.tts-key.outputs.sha }}-${{ hashFiles('scripts/build-tts.cjs') }}
+          key: tts-v1-windows-arm64-vulkan-${{ steps.tts-key.outputs.sha }}-${{ steps.vulkan-sdk.outputs.version }}-${{ hashFiles('scripts/build-tts.cjs') }}
 
       # aria2 官方没有 Windows arm64 构建，上游也没有可白嫖的 arm64 资产（见下面步骤）：
       # 走「官方 x64 构建 + Windows 11 ARM 系统模拟」，失败只警告不阻断（运行时回退
@@ -501,12 +570,13 @@ jobs:
           if (-not $exe) { throw '压缩包中未找到 ffmpeg.exe' }
           New-Item -ItemType Directory -Force bin | Out-Null
           Copy-Item $exe.FullName bin/ffmpeg.exe
-          # runner 是 x64，无法执行 arm64 二进制，改为校验 PE 头机器类型（0xAA64 = ARM64）
+          # 原生 ARM64 runner：PE 头校验 + 直接执行双重验证
           $bytes = [System.IO.File]::ReadAllBytes("$PWD\bin\ffmpeg.exe")
           $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
           $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
           if ($machine -ne 0xAA64) { throw ('bin/ffmpeg.exe 不是 ARM64 二进制 (machine=0x{0:X4})' -f $machine) }
           Write-Host 'ffmpeg.exe 机器类型校验通过：ARM64'
+          .\bin\ffmpeg.exe -version | Select-Object -First 1
 
       # 内置 aria2c（WOA）。aria2 官方只发 win-64bit 构建，abcfy2/aria2-static-build 也
       # 只在 ubuntu 上交叉编 linux-musl 与 x86_64/i686 mingw —— 先探一次上游有没有 arm64
@@ -547,7 +617,7 @@ jobs:
             if (-not $exe) { throw '压缩包中未找到 aria2c.exe' }
             New-Item -ItemType Directory -Force bin/aria2 | Out-Null
             Copy-Item $exe.FullName bin/aria2/aria2c.exe
-            # runner 是 x64：arm64 资产只能校验 PE 头；官方 x64 资产可在这里直接跑
+            # 原生 ARM64 runner 两种产物都能直接跑（x64 走系统模拟），PE 头校验架构来源
             $bytes = [System.IO.File]::ReadAllBytes("$PWD\bin\aria2\aria2c.exe")
             $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
             $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)

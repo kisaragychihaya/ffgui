@@ -7,6 +7,8 @@
 //              macOS / Windows arm64 / Linux = CPU
 //   --arch     目标架构，默认主机架构；Windows 传 arm64 时交叉编译（Vulkan 交叉不可用）
 //   --no-native 关掉 -march=native 之类的宿主优化，产物可分发到其他机器
+//   （例外：win32+arm64 会被自动忽略——ggml 要求 MSVC ARM 必须 GGML_NATIVE=ON，
+//   且该路径不追加宿主专属指令，不影响分发安全）
 //   --clean    先删掉子模块的 build/ 目录再配置
 //
 // 前置：cmake（3.19+，Vulkan 后端由 ggml/src/ggml-vulkan/CMakeLists.txt 要求）；
@@ -69,7 +71,7 @@ function parseArgs(argv) {
 
 // 默认后端：Windows x64 用 Vulkan（主力，装 Vulkan SDK 即可），
 // macOS 只做 CPU（Metal 由 ggml 在 APPLE 下默认开启，MoltenVK 暂不涉及），
-// Windows arm64 交叉编译 Vulkan 工具链不稳，也只做 CPU
+// Windows arm64 默认 CPU，需要时显式传 --backend vulkan（CI 原生 ARM64 runner 上用）
 function defaultBackend(arch) {
   if (process.platform === 'win32' && arch === 'x64') return 'vulkan';
   return 'cpu';
@@ -168,7 +170,15 @@ function main() {
     '-DCMAKE_BUILD_TYPE=Release',
     `-DGGML_VULKAN=${opts.backend === 'vulkan' ? 'ON' : 'OFF'}`,
   ];
-  if (opts.noNative) configureArgs.push('-DGGML_NATIVE=OFF');
+  // ggml 硬性要求 MSVC+ARM 必须 GGML_NATIVE=ON（ggml-cpu/CMakeLists.txt 直接 FATAL_ERROR）。
+  // 对 MSVC ARM 而言 NATIVE=ON 不会追加任何宿主专属指令（ARM_NATIVE_FLAG 恒为空，
+  // 特性只能在配置期探测宿主后写死 -D__ARM_FEATURE_*，交叉编译时为空），
+  // 因此 win32+arm64 下 --no-native 自动豁免，不影响分发安全
+  const noNativeEffective = opts.noNative && !(process.platform === 'win32' && opts.arch === 'arm64');
+  if (noNativeEffective) configureArgs.push('-DGGML_NATIVE=OFF');
+  if (opts.noNative && !noNativeEffective) {
+    console.log('[tts] 注意：MSVC ARM64 不支持 GGML_NATIVE=OFF（ggml 限制），已自动忽略 --no-native');
+  }
   // Windows 交叉编译 ARM64：默认生成器为 Visual Studio，用 -A ARM64 指定目标架构
   if (process.platform === 'win32' && opts.arch === 'arm64') {
     configureArgs.push('-A', 'ARM64');

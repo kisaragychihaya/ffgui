@@ -39,13 +39,18 @@
   `npm ci` + `npm run package`，再经 `scripts/build-installer.cjs` 生成 NSIS 安装包；
   `FFGui-windows-x64.7z` 与 `FFGui-<版本>-x64-Setup.exe` 上传 artifact；Release 触发时同时
   上传到 Release Assets
-- Windows arm64：从 tordona/ffmpeg-win-arm64 最新 release 下载 full-static-win-arm64.7z 取
-  `ffmpeg.exe` 放入 `bin/`；安装 Rust ARM64 target、加载 MSVC ARM64 环境并准备 clang（ring 的
-  ARM64 汇编需要），`cargo build --target aarch64-pc-windows-msvc` 产出 `bin/disc/ffgui-disc.exe`
-  并校验 PE 头机器类型（0xAA64）；x64 runner 无法执行 arm64 二进制；TTS 引擎只做
-  `--backend cpu --arch arm64`（Vulkan 交叉构建的工具链不稳，VS 生成器另加 `-A ARM64`）并同样
-  校验 0xAA64；`npm run package -- --arch=arm64` 交叉打包，产物 `FFGui-windows-arm64.7z` +
-  `FFGui-<版本>-arm64-Setup.exe`（NSIS 安装器架构无关，由 x64 makensis 交叉编译 arm64 内容）。
+- Windows arm64：在 **windows-11-arm 原生 ARM64 runner** 上构建（公共仓库免费、已 GA，
+  原生编译免掉交叉工具链的 MSVC 链接器配置等坑，产物可直接执行冒烟）；ffmpeg 从
+  tordona/ffmpeg-win-arm64 最新 release 下载 full-static-win-arm64.7z 取
+  `ffmpeg.exe` 放入 `bin/`（PE 头 0xAA64 校验 + 原生执行双重验证）；cargo 原生构建
+  侧车（host triple 即 aarch64-pc-windows-msvc，ring 的 ARM64 汇编仍需 clang）；
+  TTS 引擎 **Vulkan 优先**（ARM64 Vulkan SDK 与 x64 同版本号发布，下载路径为
+  `sdk.lunarg.com/sdk/download/<版本>/warm/vulkansdk-windows-ARM64-<版本>.exe`，
+  carve 解包逻辑同 x64；ARM64 包内部布局未完全实测，下载/解包/校验任一步失败只警告），
+  失败回退 `--backend cpu`（注意：ggml 要求 MSVC ARM 必须 GGML_NATIVE=ON，
+  `--no-native` 在 win32+arm64 下由 build-tts.cjs 自动忽略，且该路径不追加宿主专属指令）；
+  `npm run package -- --arch=arm64`，产物 `FFGui-windows-arm64.7z` +
+  `FFGui-<版本>-arm64-Setup.exe`（NSISBI 为 x86 二进制，在 Win11 ARM 上经系统模拟运行）。
   aria2c 用**官方 x64 构建**（Win11 ARM 系统模拟）：aria2 官方、`abcfy2/aria2-static-build`
   都没有 arm64 Windows 资产，工作流先探一次上游（有了会自动改用原生 asset），PE 头
   0x8664/0xAA64 分别校验；下载失败只警告，缺 `bin/aria2/` 时 forge 自动跳过
@@ -73,7 +78,7 @@
   `continue-on-error`（缓存键不可变，同名键已存在时保存报错不应拖垮 job）。
   Windows x64 的 CPU/Vulkan 构建与 `bin/tts/` 产物布局
   已在本机实测（产物为 `build/Release/tts-server.exe` + 同目录 `ggml*.dll`，tts-server 需与
-  dll 同目录才能启动）；**仍未验证**的是 Windows arm64 的 `-A ARM64` 交叉与 macOS 构建。
+  dll 同目录才能启动）；**仍未验证**的是 ARM64 Vulkan SDK 的 carve 解包布局与 macOS 构建。
   Vulkan SDK 自解流程已按 1.4.363.1 本机完整验证（carve + 用其编出 Vulkan 版 tts-server），
   工作流里有 ggml 三件套布局校验，LunarG 再改打包格式会显式失败并回退 CPU 后端
 - 仓库不提交 `bin/ffmpeg.exe`、`bin/aria2/` 等二进制，CI 每次现下；NSISBI 编译器同样不入库，

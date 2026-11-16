@@ -722,6 +722,15 @@ function createCdService(options = {}) {
     return true;
   }
 
+  function isRunning() {
+    return activeJob !== null;
+  }
+
+  // 关闭窗口时取消活动任务：沿用 cancel 的实现，只做转调
+  function cancelActive() {
+    return activeJob ? cancel(activeJob.id) : false;
+  }
+
   async function start(sender, job) {
     if (activeJob) throw cdError('FFGUI_CD_BUSY', t('main.cd.errBusy'));
     const normalized = validateCdJob(job);
@@ -865,7 +874,18 @@ function createCdService(options = {}) {
     }
   }
 
-  return { probe, start, cancel };
+  return { probe, start, cancel, isRunning, cancelActive };
+}
+
+// 供 main/taskgate.js 查询/取消窗口关闭时的活动任务：register 时登记实例
+let registeredService = null;
+
+function isRunning() {
+  return Boolean(registeredService && registeredService.isRunning());
+}
+
+function cancelActive() {
+  return registeredService ? registeredService.cancelActive() : false;
 }
 
 // ---------- IPC 注册 ----------
@@ -878,6 +898,7 @@ function registerCdIpc() {
   const { ipcMain } = require('electron');
   const { t: translate } = require('./i18n');
   const service = createCdService();
+  registeredService = service;
 
   async function listCdDrives() {
     const { createDiscService } = require('./disc');
@@ -951,4 +972,6 @@ module.exports = {
   CD_SECTOR_BYTES,
   CD_BYTES_PER_SEC,
   DEFAULT_COMPRESSION,
+  isRunning,
+  cancelActive,
 };

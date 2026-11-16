@@ -134,9 +134,11 @@
   };
 
   const state = {
-    files: [],        // 源文件路径列表
-    outputDir: null,  // null 表示与源文件相同
+    files: [],          // 源文件路径列表
+    outputDir: null,    // null 表示与源文件相同
     running: false,
+    currentIndex: -1,   // 当前正在转码的文件序号（file-start 事件更新）
+    pendingRemove: null, // ✕ 取消当前文件后，待任务落定再移除的序号
   };
 
   // ---------- 工具 ----------
@@ -223,8 +225,18 @@
         remove.type = 'button';
         remove.textContent = '×';
         remove.title = t('convert.btnRemoveFile');
+        // 运行中仅「正在转码的那个文件」可移除：等效于先取消任务，待任务在
+        // finally 落定后再移出列表（运行中列表不可变，序号不会偏移，且落定后
+        // 不会再有事件按旧序号标错行）；排队中的文件运行中不可移除
+        remove.classList.toggle('locked', state.running && i !== state.currentIndex);
         remove.addEventListener('click', () => {
-          if (state.running) return;
+          if (state.running) {
+            if (i !== state.currentIndex) return;
+            state.pendingRemove = i;
+            window.ffgui.cancelConvert();
+            els.status.textContent = t('convert.statusCancelling');
+            return;
+          }
           state.files.splice(i, 1);
           renderFileList();
         });
@@ -428,6 +440,7 @@
   // ---------- 转换流程 ----------
   function setRunning(running) {
     state.running = running;
+    els.back.classList.toggle('locked', running);
     els.start.classList.toggle('hidden', running);
     els.cancel.classList.toggle('hidden', !running);
     els.addFiles.disabled = running;
@@ -496,12 +509,15 @@
     };
 
     setRunning(true);
+    state.currentIndex = -1;
+    state.pendingRemove = null;
     els.progressBar.style.width = '0%';
     els.log.classList.add('hidden');
     els.log.textContent = '';
 
     const off = window.ffgui.onConvertEvent((evt) => {
       if (evt.type === 'file-start') {
+        state.currentIndex = evt.index;
         setFileStatus(evt.index, t('convert.statusConverting'), 'running');
         els.status.textContent = `(${evt.index + 1}/${state.files.length}) ${baseName(evt.input)}`;
       } else if (evt.type === 'progress') {
@@ -534,11 +550,29 @@
     } finally {
       off();
       setRunning(false);
+      // ✕ 触发的取消在此刻落地：任务已结束、事件已停发，列表才可安全移除该文件
+      if (state.pendingRemove !== null) {
+        const idx = state.pendingRemove;
+        state.pendingRemove = null;
+        if (idx >= 0 && idx < state.files.length) state.files.splice(idx, 1);
+        renderFileList();
+      }
     }
   }
 
   // ---------- 事件绑定 ----------
-  els.back.addEventListener('click', () => { window.location.href = 'index.html'; });
+  els.back.addEventListener('click', () => {
+    if (state.running) { log(t('common.backRunning')); return; }
+    window.location.href = 'index.html';
+  });
+  // 任务运行中阻止离开页面（beforeunload 无对话框，仅拦截卸载）
+  window.addEventListener('beforeunload', (e) => {
+    if (state.running) {
+      e.preventDefault();
+      e.returnValue = false;
+      els.status.textContent = t('common.backRunning');
+    }
+  });
 
   // 高级参数弹窗：打开 / 关闭（点遮罩或按钮均可关闭）
   els.btnAdvanced.addEventListener('click', () => {

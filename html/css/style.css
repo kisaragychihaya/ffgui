@@ -176,6 +176,16 @@ body {
   color: var(--accent);
 }
 
+.btn-back.locked {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-back.locked:hover {
+  border-color: var(--border);
+  color: var(--text);
+}
+
 .feature-placeholder {
   padding: 80px 24px;
   background: var(--card-bg);
@@ -331,6 +341,17 @@ body {
 .file-remove:hover {
   background: var(--error-bg);
   color: var(--danger);
+}
+
+/* 运行中排队文件的移除按钮：视觉锁定（正在转码的那个仍可点，等效先取消） */
+.file-remove.locked {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.file-remove.locked:hover {
+  background: transparent;
+  color: var(--text-secondary);
 }
 
 /* 表单 */

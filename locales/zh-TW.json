@@ -1,6 +1,7 @@
 {
   "common": {
     "backHome": "← 返回首頁",
+    "backRunning": "任務進行中，請先取消或等待完成後再返回首頁",
     "cancel": "取消"
   },
   "theme": {
@@ -553,6 +554,12 @@
       "filterKeydb": "KEYDB 金鑰庫",
       "pickVideo": "選擇影片檔案",
       "filterVideo": "影片檔案"
+    },
+    "closeConfirm": {
+      "title": "確認關閉",
+      "message": "有任務正在執行，關閉視窗將取消任務並結束。確定要關閉嗎？",
+      "stay": "繼續任務",
+      "exit": "取消任務並結束"
     },
     "err": {
       "ffmpegMissing": "找不到 ffmpeg，請先透過 Homebrew 安裝：brew install ffmpeg",

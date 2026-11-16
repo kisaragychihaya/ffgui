@@ -328,6 +328,15 @@ function createDiscService(options = {}) {
     return true;
   }
 
+  function isRunning() {
+    return activeJob !== null;
+  }
+
+  // 关闭窗口时取消活动任务：沿用 cancel 的分阶段逻辑，不另写取消实现
+  function cancelActive() {
+    return activeJob ? cancel(activeJob.id) : false;
+  }
+
   async function executeJob(state, plans, executablePath) {
     const { job, sender } = state;
     const total = plans.length;
@@ -511,12 +520,24 @@ function createDiscService(options = {}) {
     }
   }
 
-  return { probe, listDrives, start, cancel };
+  return { probe, listDrives, start, cancel, isRunning, cancelActive };
+}
+
+// 供 main/taskgate.js 查询/取消窗口关闭时的活动任务：register 时登记实例
+let registeredService = null;
+
+function isRunning() {
+  return Boolean(registeredService && registeredService.isRunning());
+}
+
+function cancelActive() {
+  return registeredService ? registeredService.cancelActive() : false;
 }
 
 function registerDiscIpc() {
   const { app, ipcMain, dialog, BrowserWindow } = require('electron');
   const service = createDiscService({ app });
+  registeredService = service;
   const windowFor = (event) => BrowserWindow.fromWebContents(event.sender);
 
   ipcMain.handle('ffgui:disc-pick-source', async (event, kind) => {
@@ -556,4 +577,6 @@ module.exports = {
   validateDiscJob,
   resolveDiscSidecarPath,
   safeFilePart,
+  isRunning,
+  cancelActive,
 };

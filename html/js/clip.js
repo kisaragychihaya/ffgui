@@ -97,6 +97,7 @@
 
   function setBusy(busy) {
     state.busy = busy;
+    els.back.classList.toggle('locked', busy);
     els.cancel.classList.toggle('hidden', !busy);
     els.pickFile.disabled = busy;
     els.capture.disabled = busy || !state.playable || !state.probe || !state.probe.hasVideo;
@@ -380,7 +381,18 @@
   }
 
   // ---------- 事件绑定 ----------
-  els.back.addEventListener('click', () => { window.location.href = 'index.html'; });
+  els.back.addEventListener('click', () => {
+    if (state.busy) { log(t('common.backRunning')); return; }
+    window.location.href = 'index.html';
+  });
+  // 任务运行中阻止离开页面（beforeunload 无对话框，仅拦截卸载）
+  window.addEventListener('beforeunload', (e) => {
+    if (state.busy) {
+      e.preventDefault();
+      e.returnValue = false;
+      els.status.textContent = t('common.backRunning');
+    }
+  });
   els.pickFile.addEventListener('click', async () => {
     const paths = await window.ffgui.pickMediaFiles();
     if (paths.length > 0) loadFile(paths[0]);

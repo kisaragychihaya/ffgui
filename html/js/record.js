@@ -102,6 +102,7 @@
 
   function updateUI() {
     const rec = state.recording;
+    els.back.classList.toggle('locked', rec || state.starting || state.stopping || state.busyRemux);
     els.start.textContent = rec ? t('record.btnStop') : t('record.btnStart');
     els.start.disabled = state.starting || state.stopping
       || (!rec && (!state.captureStream || state.busyRemux));
@@ -493,6 +494,7 @@
   async function remuxToMp4() {
     if (!state.lastSaved || state.busyRemux) return;
     state.busyRemux = true;
+    updateUI();
     els.progressTrack.classList.remove('hidden');
     els.progressBar.style.setProperty('--progress-width', '0%');
     els.status.textContent = t('record.statusRemuxing');
@@ -525,13 +527,21 @@
   }
 
   // ---------- 事件绑定 ----------
-  els.back.addEventListener('click', () => { window.location.href = 'index.html'; });
-  // 录制中阻止离开页面（beforeunload 无对话框，仅拦截卸载）
+  els.back.addEventListener('click', () => {
+    if (state.recording || state.stopping) { log(t('record.errLeaveWhileRecording')); return; }
+    if (state.busyRemux) { log(t('common.backRunning')); return; }
+    window.location.href = 'index.html';
+  });
+  // 录制/转码中阻止离开页面（beforeunload 无对话框，仅拦截卸载）
   window.addEventListener('beforeunload', (e) => {
-    if (state.recording) {
+    if (state.recording || state.stopping) {
       e.preventDefault();
       e.returnValue = false;
       els.status.textContent = t('record.errLeaveWhileRecording');
+    } else if (state.busyRemux) {
+      e.preventDefault();
+      e.returnValue = false;
+      els.status.textContent = t('common.backRunning');
     }
   });
   window.addEventListener('unload', () => {

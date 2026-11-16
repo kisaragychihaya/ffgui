@@ -1,6 +1,7 @@
 {
   "common": {
     "backHome": "← ホームに戻る",
+    "backRunning": "ジョブの実行中です。キャンセルするか完了を待ってからホームに戻ってください",
     "cancel": "キャンセル"
   },
   "theme": {
@@ -553,6 +554,12 @@
       "filterKeydb": "KEYDB キーファイル",
       "pickVideo": "動画ファイルを選択",
       "filterVideo": "動画ファイル"
+    },
+    "closeConfirm": {
+      "title": "終了の確認",
+      "message": "タスクが実行中です。ウィンドウを閉じるとタスクはキャンセルされ、終了します。閉じてもよろしいですか？",
+      "stay": "タスクを続行",
+      "exit": "タスクをキャンセルして終了"
     },
     "err": {
       "ffmpegMissing": "ffmpeg が見つかりません。Homebrew でインストールしてください：brew install ffmpeg",

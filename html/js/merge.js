@@ -231,6 +231,7 @@
   // ---------- 合并流程 ----------
   function setRunning(running) {
     state.running = running;
+    els.back.classList.toggle('locked', running);
     els.start.classList.toggle('hidden', running);
     els.cancel.classList.toggle('hidden', !running);
     els.addFiles.disabled = running;
@@ -306,7 +307,18 @@
   }
 
   // ---------- 事件绑定 ----------
-  els.back.addEventListener('click', () => { window.location.href = 'index.html'; });
+  els.back.addEventListener('click', () => {
+    if (state.running) { log(t('common.backRunning')); return; }
+    window.location.href = 'index.html';
+  });
+  // 任务运行中阻止离开页面（beforeunload 无对话框，仅拦截卸载）
+  window.addEventListener('beforeunload', (e) => {
+    if (state.running) {
+      e.preventDefault();
+      e.returnValue = false;
+      els.status.textContent = t('common.backRunning');
+    }
+  });
   els.addFiles.addEventListener('click', async () => {
     await addFiles(await window.ffgui.pickMediaFiles());
   });

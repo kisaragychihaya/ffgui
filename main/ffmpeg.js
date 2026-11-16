@@ -621,6 +621,11 @@ function cancelCurrentTask() {
   if (currentChild) currentChild.kill();
 }
 
+// 是否有 ffmpeg 任务在跑（转码/合并/截取/预览/录屏转 MP4 都经 currentChild）
+function isTaskRunning() {
+  return currentChild !== null;
+}
+
 // 新任务开始前清空上一轮的取消标记；图片转换等复用 runFfmpegTask 的模块
 // 与转换/合并共用同一标记，不重置会让连续两次任务被旧标记污染
 function resetCancel() {
@@ -1150,6 +1155,32 @@ function registerDisplayMediaHandler() {
 // 每次 write 等回调返回（背压），长录制不会撑爆内存
 const recordStreams = new Map();
 
+// 关闭窗口前判断是否还有录制在写盘
+function isRecording() {
+  return recordStreams.size > 0;
+}
+
+// 丢弃单个未完成的录制：销毁写流并删除半成品文件
+function discardRecord(targetPath) {
+  const stream = recordStreams.get(targetPath);
+  recordStreams.delete(targetPath);
+  if (stream) stream.destroy();
+  try {
+    fs.unlinkSync(targetPath);
+  } catch {
+    // 文件不存在（如尚未写入分块）则忽略
+  }
+  console.log(`[ffgui] 已丢弃未完成的录制: ${targetPath}`);
+  return true;
+}
+
+// 关闭窗口前丢弃全部未完成的录制（IPC 未走 recordDiscard 时由 taskgate 调用）
+function discardOpenRecords() {
+  const paths = [...recordStreams.keys()];
+  for (const targetPath of paths) discardRecord(targetPath);
+  return paths.length;
+}
+
 // 录制收尾自动重封装：MediaRecorder 产出的是直播式 WebM（无 Cues 快进索引、无有效
 // 总时长，播放器无法拖动进度条），用 ffmpeg -c copy 重写容器补全后替换原文件。
 // 重封装失败只记日志、保留原始文件，绝不影响保存结果
@@ -1387,18 +1418,7 @@ function registerIpc() {
   }));
 
   // 取消 / 出错：丢弃半成品文件
-  ipcMain.handle('ffgui:recordDiscard', (_event, targetPath) => {
-    const stream = recordStreams.get(targetPath);
-    recordStreams.delete(targetPath);
-    if (stream) stream.destroy();
-    try {
-      fs.unlinkSync(targetPath);
-    } catch {
-      // 文件不存在（如尚未写入分块）则忽略
-    }
-    console.log(`[ffgui] 已丢弃未完成的录制: ${targetPath}`);
-    return true;
-  });
+  ipcMain.handle('ffgui:recordDiscard', (_event, targetPath) => discardRecord(targetPath));
 
   // 录制结果转 MP4（视频流复制 + 音频转 AAC；进度事件复用 convert-event）
   ipcMain.handle('ffgui:recordRemux', (event, input) => runRecordRemux(event.sender, input));
@@ -1441,4 +1461,7 @@ module.exports = {
   buildOutputPath,
   resetCancel,
   isCancelled,
+  isTaskRunning,
+  isRecording,
+  discardOpenRecords,
 };

@@ -2004,6 +2004,15 @@ function createDubService(options = {}) {
     return true;
   }
 
+  function isRunning() {
+    return activeJob !== null;
+  }
+
+  // 关闭窗口时取消活动任务：沿用 cancel 的语义，只做转调
+  function cancelActive() {
+    return activeJob ? cancel(activeJob.id) : false;
+  }
+
   async function start(sender, job) {
     if (activeJob) throw dubError('FFGUI_DUB_BUSY', t('main.dub.errBusy'));
     if (downloadState) throw dubError('FFGUI_DUB_BUSY', t('main.dub.errBusyDownload'));
@@ -2235,8 +2244,21 @@ function createDubService(options = {}) {
     parseSubtitleFile,
     start,
     cancel,
+    isRunning,
+    cancelActive,
     dispose,
   };
+}
+
+// 供 main/taskgate.js 查询/取消窗口关闭时的活动任务：register 时登记实例
+let registeredService = null;
+
+function isRunning() {
+  return Boolean(registeredService && registeredService.isRunning());
+}
+
+function cancelActive() {
+  return registeredService ? registeredService.cancelActive() : false;
 }
 
 // ---------- IPC 注册 ----------
@@ -2246,6 +2268,7 @@ function registerDubIpc() {
   const { ipcMain, dialog, app, BrowserWindow } = electron;
   const { t: translate } = require('./i18n');
   const service = createDubService({ app });
+  registeredService = service;
 
   ipcMain.handle('ffgui:dub-status', () => service.status());
   ipcMain.handle('ffgui:dub-languages', () => service.languages());
@@ -2292,6 +2315,8 @@ function registerDubIpc() {
 module.exports = {
   createDubService,
   registerDubIpc,
+  isRunning,
+  cancelActive,
   // 纯函数（供渲染层复用与单测）
   parseSubtitleCues,
   buildDubAssemblyArgs,

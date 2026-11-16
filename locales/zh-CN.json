@@ -1,6 +1,7 @@
 {
   "common": {
     "backHome": "← 返回首页",
+    "backRunning": "任务进行中，请先取消或等待完成后再返回首页",
     "cancel": "取消"
   },
   "theme": {
@@ -672,6 +673,12 @@
       "filterKeydb": "KEYDB 密钥库",
       "pickVideo": "选择视频文件",
       "filterVideo": "视频文件"
+    },
+    "closeConfirm": {
+      "title": "确认关闭",
+      "message": "有任务正在执行，关闭窗口将取消任务并退出。确定要关闭吗？",
+      "stay": "继续任务",
+      "exit": "取消任务并退出"
     },
     "err": {
       "ffmpegMissing": "未找到 ffmpeg，请先通过 Homebrew 安装：brew install ffmpeg",

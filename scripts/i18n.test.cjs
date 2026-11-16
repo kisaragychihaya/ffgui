@@ -89,7 +89,7 @@ test('词典：页面与脚本引用的键全部存在，且无未使用的键',
     + fs.readFileSync(path.join(repo, 'html/js/i18n.js'), 'utf8')
     // 主进程文案（报错 / 对话框标题 / 筛选器名）；新模块不存在时跳过，
     // 存在即计入语料，其词典键必须被真正引用
-    + ['main/ffmpeg.js', 'main/disc.js', 'main/cdrip.js', 'main/i18n.js', 'main/dub.js', 'main/imgconv.js']
+    + ['index.js', 'main/ffmpeg.js', 'main/disc.js', 'main/cdrip.js', 'main/i18n.js', 'main/dub.js', 'main/imgconv.js']
       .map((file) => path.join(repo, file))
       .filter((file) => fs.existsSync(file))
       .map((file) => fs.readFileSync(file, 'utf8')).join('\n');

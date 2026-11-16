@@ -1,6 +1,7 @@
 {
   "common": {
     "backHome": "← Back to Home",
+    "backRunning": "A job is running; cancel it or wait for it to finish before returning home",
     "cancel": "Cancel"
   },
   "theme": {
@@ -553,6 +554,12 @@
       "filterKeydb": "KEYDB file",
       "pickVideo": "Select video file",
       "filterVideo": "Video files"
+    },
+    "closeConfirm": {
+      "title": "Confirm close",
+      "message": "A task is running. Closing the window will cancel the task and exit. Close anyway?",
+      "stay": "Keep running",
+      "exit": "Cancel task and exit"
     },
     "err": {
       "ffmpegMissing": "ffmpeg was not found. Install it first with Homebrew: brew install ffmpeg",

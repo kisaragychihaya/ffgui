@@ -8,7 +8,11 @@
 index.js            主进程入口：BrowserWindow 1080x720（contextIsolation: true、
                     nodeIntegration: false），ready 后依次调用 main/ffmpeg.registerIpc()、
                     main/disc.registerDiscIpc()、main/theme（initTheme + registerThemeIpc）；
-                    开发模式自动开 DevTools，打包后拦截 devtools-opened 强制关闭
+                    开发模式自动开 DevTools，打包后拦截 devtools-opened 强制关闭；
+                    窗口 close 在有任务执行时弹二次确认（见「窗口关闭拦截」）
+main/taskgate.js    窗口关闭拦截的任务聚合层：isBusy() 汇总 ffmpeg 任务 / 录屏写盘 / 光盘 /
+                    CD / 配音是否在跑，cancelAll() 依次取消并丢弃半成品；单向依赖各任务
+                    模块，各任务模块不得 require 本模块（防循环）
 main/ffmpeg.js      主进程核心（新增导出 runFfmpegTask / buildOutputPath / resetCancel /
                     isCancelled，供图片互转复用 spawn 进度解析、输出命名与取消标记），见下节
 main/imgconv.js     图片格式互转（WebP/JPG/PNG/ICO/BMP/GIF/TIF/TGA，动图取首帧）：逐文件
@@ -269,6 +273,25 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
 .github/workflows/  CI，见 docs/build-release.md「部署 / CI」
 ```
 
+## 窗口关闭拦截（main/taskgate.js）
+
+- `index.js` 的 `createWindow()` 给唯一窗口挂 `close` 拦截：`forceClose` 已置位或
+  `taskgate.isBusy()` 为 false（空闲）时直接放行；有任务时 `e.preventDefault()`，用
+  `dialog.showMessageBoxSync` 弹二次确认（默认按钮与 cancelId 都是「继续任务」）
+- 用户选「取消任务并退出」后：`forceClose = true` → `taskgate.cancelAll()` →
+  500ms 后 `win.destroy()`。清理窗口等待取消落地（ffmpeg close 回调删半成品）；
+  用 `destroy()` 而非 `close()` 是为了绕过渲染层各页的 `beforeunload` 拦截
+- `cancelAll()` 依次：`ffmpeg.cancelCurrentTask()`（转码/合并/截取/预览/录屏转 MP4）、
+  `ffmpeg.discardOpenRecords()`（销毁录制写流并删半成品 webm）、`disc.cancelActive()`、
+  `cdrip.cancelActive()`、`dub.cancelActive()`；各模块只转调自己的 `cancel`，不重写取消逻辑
+- `isBusy()` 五路来源：`ffmpeg.isTaskRunning()`（`currentChild`）、
+  `ffmpeg.isRecording()`（`recordStreams`）、以及 disc / cdrip / dub service 的
+  `isRunning()`（其闭包里的 `activeJob`，由 `registerXxxIpc` 登记实例）
+- `app.on('before-quit')` 置 `forceClose = true`：`app.quit()` / Cmd+Q / 系统会话结束
+  等应用层退出不弹确认，保持原有行为
+- 单向依赖：`taskgate` require 各任务模块，各任务模块不得 require `taskgate`；
+  不加 IPC、不改 preload，渲染层无感
+
 ## main/ffmpeg.js 要点
 
 - **getFfmpegPath**：Windows 开发读项目根 `bin/ffmpeg.exe`、打包读 resources（按
@@ -288,6 +311,10 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
 - **新导出**：`runFfmpegTask`、`buildOutputPath`、`resetCancel`、`isCancelled` 供
   `main/imgconv.js` 复用 spawn/进度解析、输出避让与共享取消标记；图片任务走独立的
   `ffgui:imgconv-event` 事件频道，取消仍调 `cancelCurrentTask`
+- **任务状态访问器**：`isTaskRunning()`（`currentChild` 非空）、`isRecording()`
+  （`recordStreams` 非空）、`discardOpenRecords()`（销毁全部录制写流并删除半成品 webm）
+  供 `main/taskgate.js` 在关闭窗口时查询与清理；`ffgui:recordDiscard` 的单文件清理复用
+  内部 `discardRecord`
 - **设备预设**（`job.devicePreset`）：主进程由 `normalizeConvertJob` 按 `DEVICE_PRESETS` 表
   二次落实（不能被旧表单值覆盖，须在分配输出扩展名前调用），每个预设锁定 格式/编码器/
   Profile/Level/位深/帧率上限/分辨率/VBV 码率三件套/音频码率/声道/采样率；渲染层 convert.js

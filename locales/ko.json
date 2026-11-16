@@ -1,6 +1,7 @@
 {
   "common": {
     "backHome": "← 홈으로",
+    "backRunning": "작업이 실행 중입니다. 취소하거나 완료된 후 홈으로 돌아가세요",
     "cancel": "취소"
   },
   "theme": {
@@ -553,6 +554,12 @@
       "filterKeydb": "KEYDB 키 파일",
       "pickVideo": "동영상 파일 선택",
       "filterVideo": "동영상 파일"
+    },
+    "closeConfirm": {
+      "title": "종료 확인",
+      "message": "실행 중인 작업이 있습니다. 창을 닫으면 작업이 취소되고 종료됩니다. 닫으시겠습니까?",
+      "stay": "작업 계속",
+      "exit": "작업 취소 후 종료"
     },
     "err": {
       "ffmpegMissing": "ffmpeg를 찾을 수 없습니다. Homebrew로 먼저 설치하세요: brew install ffmpeg",

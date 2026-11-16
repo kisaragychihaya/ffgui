@@ -22,7 +22,8 @@
 
 ## 部署 / CI
 
-`.github/workflows/build.yml`（workflow_dispatch 手动触发或发布 Release 时触发）：
+`.github/workflows/build.yml`（workflow_dispatch 手动触发、发布 Release 时触发，
+或每 5 天定时触发一次刷新 actions/cache；定时构建只传 artifact、不上 Release Assets）：
 
 - Windows x64：从 GyanD/codexffmpeg 最新 release 下载 full_build.7z（gyan.dev 直链在 CI 上会被
   反爬拦截），取 `ffmpeg.exe` 放入 `bin/`；从 aria2 官方 Release 下载

@@ -6,6 +6,12 @@ on:
   # 发布 Release 时触发
   release:
     types: [published]
+  # 每 5 天定时跑一次（UTC 09:37 ≈ 北京时间 17:37）：actions/cache 闲置超 7 天会被回收
+  # （TTS 编译产物、Vulkan SDK 安装包等大件），定时构建刷新缓存访问、按需重存，
+  # 保证发版时缓存命中。产物只传 Actions artifact（上传 Release Assets 有
+  # github.event_name == 'release' 门控，定时触发不会误传）
+  schedule:
+    - cron: '37 9 */5 * *'
 
 # Release 触发时上传产物到 Release Assets 需要写权限
 permissions:

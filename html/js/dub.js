@@ -26,12 +26,13 @@
   const MIX_VOLUME_MIN_DB = -30;
   const MIX_VOLUME_MAX_DB = 12;
 
-  // 说话人：customvoice 模型的固定音色，与 main/dub.js 的 DEFAULT_SPEAKERS 一一对应。
-  // 显示名就是值（上游说话人本就是英文名，不翻译）；正常由 status().speakers 下发，
-  // 接口不可用时用这份兜底。主进程对白名单外的值一律回默认，这里不会让任务失败。
+  // 说话人：customvoice 模型的固定音色，与 main/dub.js 的 DEFAULT_SPEAKERS 一一对应
+  // （引擎实测到的 GGUF 说话人表）。显示名就是值（上游说话人本就是英文名，不翻译）；
+  // 正常由 status().speakers 下发（引擎就绪后为 /v1/audio/voices 实测名单），接口
+  // 不可用时用这份兜底。主进程对名单外的值一律回默认，这里不会让任务失败。
   const SPEAKERS = [
-    'Vivian', 'Alex', 'Ann', 'Davis', 'Jackson',
-    'Jeff', 'Rachel', 'Ethan', 'Quinn', 'Charlotte',
+    'Serena', 'Vivian', 'Uncle Fu', 'Ryan', 'Aiden',
+    'Ono Anna', 'Sohee', 'Eric', 'Dylan',
   ];
   const DEFAULT_SPEAKER = 'Vivian';
 

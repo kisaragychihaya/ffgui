@@ -67,13 +67,18 @@ main/dub.js         字幕配音（dub）：spawn 本地 TTS 引擎 tts-server�
                     1.7b **customvoice**（qwen-talker-1.7b-customvoice-<variant>.gguf，配
                     共用的 qwen-tokenizer-12hz-<variant>.gguf）：base 模式没有说话人表、逐条
                     字幕的音色都是随机采样，同一份字幕两次配音像两个人；customvoice 的 GGUF
-                    带 qwen3-tts.codec.speaker_names 十个固定说话人，白名单见 DEFAULT_SPEAKERS
-                    （Vivian/Alex/Ann/Davis/Jackson/Jeff/Rachel/Ethan/Quinn/Charlotte，默认
-                    Vivian），由 status().speakers 下发给页面「说话人」下拉，下拉值与显示名
-                    同为英文原文，引擎未就绪或模型未下载时禁用。请求体按条带 voice（该说话人）
-                    与 seed = 0：0 是确定性的固定种子，引擎里 -1 才是「不指定」取硬件随机，
-                    固定种子让同一字幕每次合成结果一致。speaker 由 normalizeSpeaker 归一
-                    （大小写不敏感、只认字符串，白名单外回默认 Vivian 而不报错）。模型 GGUF 不随包
+                    带 qwen3-tts.codec.speaker_names 固定说话人，静态兜底白名单见 DEFAULT_SPEAKERS
+                    （Serena/Vivian/Uncle Fu/Ryan/Aiden/Ono Anna/Sohee/Eric/Dylan 九项，与 GGUF
+                    转换版实测一致，默认 Vivian；勿照抄 Qwen 官方模型卡的名字，两套不对应、
+                    传错名会被引擎当 unknown speaker 拒绝）。引擎就绪后一律以
+                    /v1/audio/voices 实测为准：startEngine 与 status() 都会拉取并缓存，由
+                    status().speakers 下发给页面「说话人」下拉（原样返回引擎名字），下拉值
+                    与显示名同为英文原文，引擎未就绪或模型未下载时用静态兜底并禁用选择。
+                    请求体按条带 voice（该说话人）与 seed = 0：0 是确定性的固定种子，引擎里
+                    -1 才是「不指定」取硬件随机，固定种子让同一字幕每次合成结果一致。speaker
+                    由 normalizeSpeaker 归一（大小写不敏感、只认字符串；静态白名单在前保持
+                    显示写法，引擎实测的动态名单在后兜上游增删改名，都不匹配回默认 Vivian
+                    而不报错）。模型 GGUF 不随包
                     分发：首次使用下载到 userData/tts-models/，下载源三选一 —— 官方
                     huggingface.co、hf-mirror.com、ModelScope
                     （modelscope.cn/models/leletxh/Qwen3-TTS-GGUF，第三方搬运仓库，分支

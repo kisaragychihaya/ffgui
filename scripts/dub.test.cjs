@@ -708,11 +708,11 @@ test('任务校验：白名单字段与错误码', () => {
     mixVolumeDb: 0,
   });
   const full = dub.validateDubJob({
-    id: 'job_2', video: '/v/a.mp4', subtitle: '/v/a.srt', language: 'Chinese', backend: 'cpu', container: 'mkv', variant: 'q4_k_m', speaker: 'Jackson',
+    id: 'job_2', video: '/v/a.mp4', subtitle: '/v/a.srt', language: 'Chinese', backend: 'cpu', container: 'mkv', variant: 'q4_k_m', speaker: 'Aiden',
   });
   assert.equal(full.language, 'chinese');
   assert.equal(full.variant, 'Q4_K_M');
-  assert.equal(full.speaker, 'Jackson');
+  assert.equal(full.speaker, 'Aiden');
   const bad = (job, code) => assert.throws(() => dub.validateDubJob(job), (err) => err.code === code);
   bad({ video: '/v/a.mp4', subtitle: '/v/a.srt' }, 'FFGUI_DUB_INVALID_JOB');
   bad({ id: '../evil', video: '/v/a.mp4', subtitle: '/v/a.srt' }, 'FFGUI_DUB_INVALID_JOB');
@@ -751,24 +751,24 @@ test('任务校验：mix 只认布尔 true，mixVolumeDb 越界钳制、类型�
   assert.equal(dub.normalizeMixVolumeDb(-100), -30);
 });
 
-test('说话人：十个固定名字、默认 Vivian，非法值回默认而不报错', () => {
+test('说话人：九个固定名字、默认 Vivian，非法值回默认而不报错', () => {
   assert.deepEqual(dub.DEFAULT_SPEAKERS, [
-    'Vivian', 'Alex', 'Ann', 'Davis', 'Jackson',
-    'Jeff', 'Rachel', 'Ethan', 'Quinn', 'Charlotte',
+    'Serena', 'Vivian', 'Uncle Fu', 'Ryan', 'Aiden',
+    'Ono Anna', 'Sohee', 'Eric', 'Dylan',
   ]);
   assert.equal(dub.DEFAULT_SPEAKER, 'Vivian');
   const job = (speaker) => dub.validateDubJob({
     id: 'x', video: '/v/a.mp4', subtitle: '/v/a.srt', speaker,
   }).speaker;
   // 合法值原样透传，大小写不敏感（按白名单的规范写法归一）
-  assert.equal(job('Charlotte'), 'Charlotte');
-  assert.equal(job('alex'), 'Alex');
-  assert.equal(job(' RACHEL '), 'Rachel');
+  assert.equal(job('Dylan'), 'Dylan');
+  assert.equal(job('serena'), 'Serena');
+  assert.equal(job(' SOHEE '), 'Sohee');
   // 白名单外 / 空 / 非字符串一律回默认，不让整条配音任务失败
-  for (const value of ['Nobody', '', '   ', null, undefined, 42, {}, ['Alex']]) {
+  for (const value of ['Alex', 'Nobody', '', '   ', null, undefined, 42, {}, ['Serena']]) {
     assert.equal(job(value), 'Vivian', `speaker=${JSON.stringify(value)} 应回默认`);
   }
-  assert.equal(dub.normalizeSpeaker('quinn'), 'Quinn');
+  assert.equal(dub.normalizeSpeaker('eric'), 'Eric');
   assert.equal(dub.normalizeSpeaker('unknown'), 'Vivian');
 });
 
@@ -902,6 +902,16 @@ function loadService(options = {}) {
       if (req.method === 'GET' && req.url === '/v1/models') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ object: 'list', data: [{ id: 'ffgui-dub', object: 'model' }] }));
+        return;
+      }
+      // 说话人表：默认回真实 GGUF 的九个名字；用例可用 options.voices 覆盖
+      // （模拟上游增删/改名），验证动态下发与归一放行
+      if (req.method === 'GET' && req.url === '/v1/audio/voices') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        const names = Array.isArray(options.voices)
+          ? options.voices
+          : ['serena', 'vivian', 'uncle_fu', 'ryan', 'aiden', 'ono_anna', 'sohee', 'eric', 'dylan'];
+        res.end(JSON.stringify({ voices: names.map((name) => ({ name, kind: 'speaker' })) }));
         return;
       }
       if (req.method === 'POST' && req.url === '/v1/audio/speech') {
@@ -1263,10 +1273,10 @@ test('配音任务：指定的说话人透传到每条合成请求，非法值�
     { startMs: 2000, endMs: 3000, text: 'B' },
   ]);
 
-  await h.service.start(h.sender, { id: 'job-speaker', video, subtitle, speaker: 'Rachel' });
+  await h.service.start(h.sender, { id: 'job-speaker', video, subtitle, speaker: 'Sohee' });
   assert.equal(h.speechRequests.length, 2);
   for (const req of h.speechRequests) {
-    assert.equal(req.body.voice, 'Rachel', 'voice 必须逐条带上所选说话人');
+    assert.equal(req.body.voice, 'Sohee', 'voice 必须逐条带上所选说话人');
     assert.equal(req.body.seed, 0);
   }
 
@@ -1582,6 +1592,39 @@ test('状态：引擎缺失 / 无模型 / 正常三种 state', async () => {
   assert.ok(okStatus.models.talker.bytes > 0);
   assert.equal(okStatus.models.tokenizer.present, true);
   ok.cleanup();
+});
+
+test('状态：引擎就绪后说话人以 /v1/audio/voices 实测为准，归一同步放行', async () => {
+  // 假引擎报一份静态白名单里没有的名字（模拟上游增删/改名说话人）
+  const h = loadService({ voices: ['wade', 'serena', 'vivian'] });
+  const dir = tempDir();
+  const video = path.join(dir, 'movie.mp4');
+  fs.writeFileSync(video, 'video');
+  const subtitle = writeSubtitleFile(dir, [{ startMs: 0, endMs: 1000, text: 'A' }]);
+
+  // 首个任务：任务归一发生在引擎启动前，仍走静态白名单（Vivian）；
+  // 引擎就绪后会顺手拉取一次说话人表供后续使用
+  const first = await h.service.start(h.sender, { id: 'job-spk-1', video, subtitle, speaker: 'Vivian' });
+  assert.equal(first.cancelled, false);
+  assert.equal(h.speechRequests.length, 1);
+  assert.equal(h.speechRequests[0].body.voice, 'Vivian');
+
+  // 引擎就绪后 status().speakers 用实测名单（原样返回引擎给的名字）
+  const st = await h.service.status();
+  assert.equal(st.engine.running, true);
+  assert.deepEqual([...st.speakers], ['wade', 'serena', 'vivian']);
+
+  // 实测名单里的新名字（静态白名单外）在后续任务里放行，不再被回默认；
+  // 静态内的名字仍按界面显示写法归一（行为与旧版一致）
+  const second = await h.service.start(h.sender, { id: 'job-spk-2', video, subtitle, speaker: 'Wade' });
+  assert.equal(second.cancelled, false);
+  assert.equal(h.speechRequests.length, 2);
+  assert.equal(h.speechRequests[1].body.voice, 'wade');
+  const third = await h.service.start(h.sender, { id: 'job-spk-3', video, subtitle, speaker: 'SERENA' });
+  assert.equal(third.cancelled, false);
+  assert.equal(h.speechRequests[2].body.voice, 'Serena');
+
+  h.cleanup();
 });
 
 test('解析字幕文件：返回 cues 与整体时长', async () => {

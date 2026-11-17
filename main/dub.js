@@ -158,28 +158,42 @@ const LANGUAGES = [
 
 const LANGUAGE_IDS = new Set(LANGUAGES.map((entry) => entry.id));
 
-// customvoice 模型的固定说话人（GGUF 的 qwen3-tts.codec.speaker_names，与上游 README
-// 一致）。这份白名单同时是界面下拉的数据源（status().speakers 下发）和请求校验依据。
-// 取舍：已下载模型的真实列表以 GGUF 元数据为准（引擎起来后可 GET /v1/audio/voices
-// 查），但界面在引擎没起、模型没下载时也要能列出选项，为十个固定名字多跑一趟 HTTP
-// 不划算，故用静态白名单；上游万一增删说话人，兜底行为是「非法值回默认」而不是失败。
+// customvoice 模型的固定说话人。GGUF 元数据（qwen3-tts.codec.speaker_names，
+// 实测 Serveurperso/Qwen3-TTS-GGUF 转换版为九个）是准绳：这份静态名单是界面
+// 数据源与请求校验的兜底（引擎没起、模型没下载时也要能列出选项），引擎就绪后
+// 一律以 /v1/audio/voices 实测为准（见 fetchEngineSpeakers），上游转换器增删
+// 说话人时自动适应。注意别照抄 Qwen 官方模型卡的名字（Vivian/Alex/…）——与
+// GGUF 转换版不是一套，只有 vivian 重名，其余会被引擎当 unknown speaker 拒绝。
 const DEFAULT_SPEAKERS = [
-  'Vivian', 'Alex', 'Ann', 'Davis', 'Jackson',
-  'Jeff', 'Rachel', 'Ethan', 'Quinn', 'Charlotte',
+  'Serena', 'Vivian', 'Uncle Fu', 'Ryan', 'Aiden',
+  'Ono Anna', 'Sohee', 'Eric', 'Dylan',
 ];
 // 默认说话人（界面初值 + 校验兜底）。写定字面量，不跟随数组顺序变化
 const DEFAULT_SPEAKER = 'Vivian';
 
-// 说话人归一：白名单内的按规范写法返回（大小写不敏感），其余一律回默认。
-// 宽松处理而不用报错：说话人只影响音色，名字对不上（上游改名、旧配置残留）不该让
-// 整条配音任务失败。只认字符串——数组/对象经 String() 可能拼出一个合法名字，
-// 那种值按类型错误处理。
-function normalizeSpeaker(value) {
+// 引擎 /v1/audio/voices 实测到的真实说话人表（null = 本会话还没拉到）。
+// 引擎就绪后由 fetchEngineSpeakers 写入，normalizeSpeaker 与 status().speakers
+// 优先使用；每次 startEngine 成功都会重新拉取，换模型后立即生效
+let engineSpeakers = null;
+
+// 说话人归一：静态白名单在前（已知的九个名字保持界面显示写法，行为与旧版一致），
+// 引擎实测的动态名单在后（兜上游新增/改名，静态外的名字按引擎原样放行），
+// 按各自规范写法返回（大小写不敏感）；都不匹配一律回默认。宽松处理而不用报错：
+// 说话人只影响音色，名字对不上（旧配置残留）不该让整条配音任务失败。只认字符串——
+// 数组/对象经 String() 可能拼出一个合法名字，那种值按类型错误处理。
+function normalizeSpeaker(value, extraSpeakers) {
   if (typeof value !== 'string') return DEFAULT_SPEAKER;
   const name = value.trim().toLowerCase();
   if (!name) return DEFAULT_SPEAKER;
-  const hit = DEFAULT_SPEAKERS.find((speaker) => speaker.toLowerCase() === name);
-  return hit || DEFAULT_SPEAKER;
+  const lists = [];
+  if (Array.isArray(extraSpeakers) && extraSpeakers.length > 0) lists.push(extraSpeakers);
+  lists.push(DEFAULT_SPEAKERS);
+  if (Array.isArray(engineSpeakers) && engineSpeakers.length > 0) lists.push(engineSpeakers);
+  for (const list of lists) {
+    const hit = list.find((speaker) => typeof speaker === 'string' && speaker.toLowerCase() === name);
+    if (hit) return hit;
+  }
+  return DEFAULT_SPEAKER;
 }
 
 // 音轨语言元数据用的 BCP 47 码（容器层面，与引擎的 --lang 名字是两套）
@@ -1156,6 +1170,10 @@ function createDubService(options = {}) {
     } catch {
       // 版本只是展示信息，取不到不影响合成
     }
+    // 顺手拉一次真实说话人表：本会话首个任务提交时（任务归一在引擎启动前
+    // 发生）也已有动态名单可用；拉取失败不阻塞，status() 与归一仍回退静态白名单
+    const liveSpeakers = await fetchEngineSpeakers();
+    if (liveSpeakers) engineSpeakers = liveSpeakers;
     console.log(`[ffgui] tts-server 就绪：port=${port} backend=${backend}`);
     return engine;
   }
@@ -1440,6 +1458,38 @@ function createDubService(options = {}) {
 
   // ---------- 状态 ----------
 
+  // 引擎在跑时从 /v1/audio/voices 拉真实说话人表（只收 kind=speaker 的条目；
+  // 克隆音色 voice 不进下拉）。引擎未就绪、请求失败或返回空一律返回 null，
+  // 调用方回退静态白名单。startEngine 与 status() 共用
+  async function fetchEngineSpeakers() {
+    if (!(engine.ready && engine.port)) return null;
+    try {
+      const res = await httpRequest({ port: engine.port, pathName: '/v1/audio/voices', timeoutMs: 3000 });
+      if (res.status !== 200) return null;
+      const data = JSON.parse(res.body.toString('utf8'));
+      if (!Array.isArray(data.voices)) return null;
+      const list = data.voices
+        .filter((v) => v && v.kind === 'speaker' && typeof v.name === 'string' && v.name.trim() !== '')
+        .map((v) => v.name);
+      return list.length > 0 ? list : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // status().speakers 的数据源：引擎在跑时以实测为准（同时缓存进 engineSpeakers，
+  // 供任务归一放行动态名单）；引擎未启动或拉取失败回退上次缓存，再退静态白名单
+  async function currentSpeakers() {
+    if (engine.ready && engine.child && !engine.exited) {
+      const live = await fetchEngineSpeakers();
+      if (live) {
+        engineSpeakers = live;
+        return live.slice();
+      }
+    }
+    return (engineSpeakers || DEFAULT_SPEAKERS).slice();
+  }
+
   function languages() {
     return LANGUAGES.map((entry) => ({ ...entry }));
   }
@@ -1479,8 +1529,9 @@ function createDubService(options = {}) {
         }
         : null,
       languages: languages(),
-      // 说话人白名单随状态一起下发，界面下拉直接用（不必等引擎起来问 /v1/audio/voices）
-      speakers: DEFAULT_SPEAKERS.slice(),
+      // 说话人随状态下发：引擎就绪后从 /v1/audio/voices 实测（界面不必等引擎
+      // 起来就能看到选项——未启动时回退静态白名单），详见 currentSpeakers
+      speakers: await currentSpeakers(),
     };
   }
 

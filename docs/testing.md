@@ -11,8 +11,10 @@
 ffmpeg 命令组装、字幕条目解析与时间轴
 换算、模型下载的 https/aria2 两条路径与内置 aria2c 路径解析——aria2 用注入的假 spawn，
 默认注入 `aria2: false` 避免真探测 PATH；请求体断言 voice = 所选说话人、seed 固定 0，
-DEFAULT_SPEAKERS 十项与 normalizeSpeaker 的归一（大小写不敏感、非字符串/白名单外回默认
-Vivian，服务层再验一次非法说话人不报错照常配音）；配音成功链路上还覆盖三条防静默产出的自检：空 data
+DEFAULT_SPEAKERS 九项与 normalizeSpeaker 的归一（大小写不敏感、非字符串/名单外回默认
+Vivian，服务层再验一次非法说话人不报错照常配音）；服务层另验引擎就绪后说话人以
+/v1/audio/voices 实测为准（status().speakers 原样下发、静态外新名字放行、静态内名字
+仍按显示写法归一）；配音成功链路上还覆盖三条防静默产出的自检：空 data
 段的 WAV 在第 N 条就报 FFGUI_DUB_SYNTH、组装音轨全静音报 FFGUI_DUB_SILENT（假 ffmpeg 按
 `volumedetect` 参数分支回 -91.0 dB）、成品音轨数不对报 FFGUI_DUB_MUX 并删成品。mock 用
 `producedOutputs` 记住本任务写出的文件来区分「源探测」与「混流后回探」，判别混流调用要看
@@ -128,8 +130,11 @@ aria2c 时，应自动回退内置 https 下载）、
   tokenizer 两个 GGUF，不随包分发，首次使用下载到 `userData/tts-models/`。talker 固定用
   **customvoice** 变体（`qwen-talker-1.7b-customvoice-<variant>.gguf`）：base 变体没有
   speaker_names、逐条字幕音色随机，已从代码里移除，**旧版本下过的 base 文件不会被识别**
-  （文件名不同），升级后要重新下载一次。说话人取 `DEFAULT_SPEAKERS` 十项（与 GGUF 的
-  `qwen3-tts.codec.speaker_names` 一致），合成请求逐条带 `voice` 与 `seed = 0`；说话人不影响
+  （文件名不同），升级后要重新下载一次。说话人静态兜底 `DEFAULT_SPEAKERS` 九项
+  （Serena/Vivian/Uncle Fu/Ryan/Aiden/Ono Anna/Sohee/Eric/Dylan，与 GGUF 转换版实测的
+  `qwen3-tts.codec.speaker_names` 一致；注意别照抄 Qwen 官方模型卡的名字，两套不是一回事），
+  引擎就绪后一律以 `/v1/audio/voices` 实测为准（status().speakers 下发、归一放行的动态名单），
+  上游转换器增删说话人自动适应；合成请求逐条带 `voice` 与 `seed = 0`；说话人不影响
   识别/断句，只换音色。下载源可选官方
   HuggingFace、hf-mirror.com、ModelScope（页面「下载源」下拉，值 official / hfmirror /
   modelscope）：ModelScope 用的是第三方搬运仓库 `leletxh/Qwen3-TTS-GGUF`，只有 Q8_0 的两个

@@ -335,6 +335,9 @@ jobs:
         id: delta-inputs
         shell: bash
         continue-on-error: true
+        # 下载 100% 后连接偶发不关闭会把 curl 卡死：步骤硬超时 10 分钟兜底
+        # （约 600MB 正常 1-2 分钟），失败只跳过增量包，不阻断发版
+        timeout-minutes: 10
         env:
           WORK: ${{ runner.temp }}/ffgui-delta-prev
           PREV_7Z: ${{ steps.prev-release.outputs.prev_7z }}
@@ -342,7 +345,7 @@ jobs:
           set -u
           prev_dir=''
           xdelta3=''
-          if curl -fsSL --retry 3 -o "$WORK/prev.7z" "$PREV_7Z" \
+          if curl -fsSL --retry 3 --connect-timeout 30 --max-time 540 -o "$WORK/prev.7z" "$PREV_7Z" \
              && 7z x -y "$WORK/prev.7z" -o"$WORK/prev-app" > /dev/null; then
             exe=$(find "$WORK/prev-app" -maxdepth 3 -name FFGui.exe -type f -print -quit)
             if [ -n "$exe" ] && [ -f "$(dirname "$exe")/resources/app.asar" ]; then
@@ -398,6 +401,9 @@ jobs:
         id: delta-smoke
         shell: pwsh
         continue-on-error: true
+        # 实测 curl 完成后连接偶发不关闭、或某个安装器不退都会把步骤卡死：步骤硬超时
+        # 15 分钟兜底（正常全程 <5 分钟），超时失败只跳过增量包上传，不拖垮整个发版
+        timeout-minutes: 15
         run: |
           $setupUrl = '${{ steps.prev-release.outputs.prev_setup }}'
           if (-not $setupUrl) {
@@ -409,11 +415,22 @@ jobs:
           $setupFile = Join-Path $env:RUNNER_TEMP 'ffgui-delta-prev\prev-setup.exe'
           Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force $work | Out-Null
-          curl.exe -fL --retry 3 -o $setupFile $setupUrl
+          # --max-time 兜底：下载 100% 后连接偶发不关闭，curl 会干等到天荒地老
+          curl.exe -fL --retry 3 --connect-timeout 30 --max-time 600 -o $setupFile $setupUrl
           if ($LASTEXITCODE -ne 0) { throw '下载旧版 Setup.exe 失败' }
 
-          $p = Start-Process -FilePath $setupFile -ArgumentList '/S', "/D=$dir" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "旧版安装退出码 $($p.ExitCode)" }
+          # 带超时的 -Wait：Start-Process -Wait 在子进程句柄异常时不保证返回
+          function Wait-OrKill($proc, $seconds, $label) {
+            if (-not $proc.WaitForExit($seconds * 1000)) {
+              try { $proc.Kill() } catch {}
+              throw "$label ${seconds}s 未退出，已杀掉（步骤失败但不再卡死）"
+            }
+            return $proc.ExitCode
+          }
+
+          $p = Start-Process -FilePath $setupFile -ArgumentList '/S', "/D=$dir" -PassThru
+          $code = Wait-OrKill $p 240 '旧版安装'
+          if ($code -ne 0) { throw "旧版安装退出码 $code" }
           $oldVersion = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ffgui').DisplayVersion
           if ($oldVersion -ne '${{ steps.prev-release.outputs.prev_version }}') {
             throw "旧版 DisplayVersion=$oldVersion 与 Release tag 推导的版本不一致"
@@ -422,8 +439,9 @@ jobs:
           $delta = Get-ChildItem out/make/delta/x64/delta-update-*.exe -ErrorAction SilentlyContinue |
             Select-Object -First 1
           if (-not $delta) { throw '未找到增量安装包' }
-          $p = Start-Process -FilePath $delta.FullName -ArgumentList '/S' -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "增量安装退出码 $($p.ExitCode)" }
+          $p = Start-Process -FilePath $delta.FullName -ArgumentList '/S' -PassThru
+          $code = Wait-OrKill $p 480 '增量安装'
+          if ($code -ne 0) { throw "增量安装退出码 $code" }
 
           # 静默模式会在最后重启应用；Exec 是异步的，轮询几次确保进程退出，
           # 否则会占用文件影响哈希校验与卸载
@@ -468,8 +486,10 @@ jobs:
           }
           Write-Host '增量包冒烟通过'
 
-          # 卸载清理（增量安装器刻意不碰卸载器/快捷方式）
-          Start-Process -FilePath (Join-Path $dir 'uninstall.exe') -ArgumentList '/S' -Wait
+          # 卸载清理（增量安装器刻意不碰卸载器/快捷方式）；卸载器会自我复制到
+          # 临时目录再执行，句柄早退也常见，同样带超时
+          $p = Start-Process -FilePath (Join-Path $dir 'uninstall.exe') -ArgumentList '/S' -PassThru
+          Wait-OrKill $p 180 '卸载' | Out-Null
           for ($i = 0; $i -lt 30 -and (Test-Path (Join-Path $dir 'FFGui.exe')); $i++) { Start-Sleep -Seconds 1 }
           if (Test-Path (Join-Path $dir 'FFGui.exe')) { throw '卸载后仍残留安装目录' }
           if (Test-Path $lnk) { throw '卸载后仍残留桌面快捷方式' }

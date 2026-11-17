@@ -33,15 +33,44 @@ jobs:
         with:
           node-version: 22
 
+      # 光盘侧车缓存：源码 = native/ffgui-disc（在仓库内），键含源码与锁文件哈希，
+      # 改动自动失效；产物是单文件自包含二进制，命中即跳过 Rust 安装与编译。
+      # 每 5 天的定时构建会访问缓存，避免闲置 7 天被 actions/cache 回收
+      - name: 恢复光盘侧车缓存
+        id: disc-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: bin/disc
+          key: disc-v1-windows-x64-${{ hashFiles('native/ffgui-disc/Cargo.toml', 'native/ffgui-disc/Cargo.lock', 'native/ffgui-disc/src/**') }}
+
+      - name: 校验光盘侧车缓存产物
+        id: disc-valid
+        shell: pwsh
+        run: |
+          $ok = '${{ steps.disc-cache.outputs.cache-hit }}' -eq 'true' -and (Test-Path bin/disc/ffgui-disc.exe)
+          "ok=$($ok.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          echo "光盘侧车缓存有效：$ok"
+
       - name: 安装 Rust
+        if: steps.disc-valid.outputs.ok != 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: 构建光盘侧车
+        if: steps.disc-valid.outputs.ok != 'true'
         shell: pwsh
         run: |
           cargo build --locked --release --manifest-path native/ffgui-disc/Cargo.toml
           New-Item -ItemType Directory -Force bin/disc | Out-Null
           Copy-Item native/ffgui-disc/target/release/ffgui-disc.exe bin/disc/ffgui-disc.exe
+
+      - name: 保存光盘侧车缓存
+        # continue-on-error：缓存不可变，同名键已存在时保存会报错，但产物本身已就绪
+        continue-on-error: true
+        if: steps.disc-valid.outputs.ok != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: bin/disc
+          key: disc-v1-windows-x64-${{ hashFiles('native/ffgui-disc/Cargo.toml', 'native/ffgui-disc/Cargo.lock', 'native/ffgui-disc/src/**') }}
 
       # Vulkan SDK 是 Vulkan 后端的硬前置：ggml 的 ggml-vulkan 目标要求 glslc 与
       # SPIRV-Headers，并通过 VULKAN_SDK 环境变量定位。
@@ -594,11 +623,29 @@ jobs:
         with:
           node-version: 22
 
+      # 光盘侧车缓存：同 x64 job，命中即跳过 Rust/clang 准备与编译
+      - name: 恢复光盘侧车缓存
+        id: disc-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: bin/disc
+          key: disc-v1-windows-arm64-${{ hashFiles('native/ffgui-disc/Cargo.toml', 'native/ffgui-disc/Cargo.lock', 'native/ffgui-disc/src/**') }}
+
+      - name: 校验光盘侧车缓存产物
+        id: disc-valid
+        shell: pwsh
+        run: |
+          $ok = '${{ steps.disc-cache.outputs.cache-hit }}' -eq 'true' -and (Test-Path bin/disc/ffgui-disc.exe)
+          "ok=$($ok.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          echo "光盘侧车缓存有效：$ok"
+
       # 原生 ARM64 runner 默认 host triple 即 aarch64-pc-windows-msvc，无需 targets 覆盖
       - name: 安装 Rust
+        if: steps.disc-valid.outputs.ok != 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: 准备 clang（ring ARM64 汇编）
+        if: steps.disc-valid.outputs.ok != 'true'
         shell: pwsh
         run: |
           if (-not (Get-Command clang -ErrorAction SilentlyContinue)) {
@@ -613,11 +660,21 @@ jobs:
           clang --version
 
       - name: 构建光盘侧车
+        if: steps.disc-valid.outputs.ok != 'true'
         shell: pwsh
         run: |
           cargo build --locked --release --manifest-path native/ffgui-disc/Cargo.toml
           New-Item -ItemType Directory -Force bin/disc | Out-Null
           Copy-Item native/ffgui-disc/target/release/ffgui-disc.exe bin/disc/ffgui-disc.exe
+
+      - name: 保存光盘侧车缓存
+        # continue-on-error：缓存不可变，同名键已存在时保存会报错，但产物本身已就绪
+        continue-on-error: true
+        if: steps.disc-valid.outputs.ok != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: bin/disc
+          key: disc-v1-windows-arm64-${{ hashFiles('native/ffgui-disc/Cargo.toml', 'native/ffgui-disc/Cargo.lock', 'native/ffgui-disc/src/**') }}
 
       # ARM64 Vulkan SDK 与 x64 同版本号发布（eden 等项目在用），
       # 但 windows-arm64.txt 端点目前返回空，版本号复用 x64 的解析端点
@@ -1058,16 +1115,45 @@ jobs:
         with:
           node-version: 22
 
+      # 光盘侧车缓存：同 windows 两个 job，命中即跳过 Rust 安装与编译
+      - name: 恢复光盘侧车缓存
+        id: disc-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: bin/disc
+          key: disc-v1-macos-arm64-${{ hashFiles('native/ffgui-disc/Cargo.toml', 'native/ffgui-disc/Cargo.lock', 'native/ffgui-disc/src/**') }}
+
+      - name: 校验光盘侧车缓存产物
+        id: disc-valid
+        run: |
+          ok=false
+          if [ "${{ steps.disc-cache.outputs.cache-hit }}" = "true" ] && [ -f bin/disc/ffgui-disc ]; then
+            ok=true
+          fi
+          echo "ok=$ok" | tee -a "$GITHUB_OUTPUT"
+          echo "光盘侧车缓存有效：$ok"
+
       - name: 安装 Rust
+        if: steps.disc-valid.outputs.ok != 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: 构建光盘侧车
+        if: steps.disc-valid.outputs.ok != 'true'
         run: |
           set -e
           cargo build --locked --release --manifest-path native/ffgui-disc/Cargo.toml
           mkdir -p bin/disc
           cp native/ffgui-disc/target/release/ffgui-disc bin/disc/ffgui-disc
           chmod +x bin/disc/ffgui-disc
+
+      - name: 保存光盘侧车缓存
+        # continue-on-error：缓存不可变，同名键已存在时保存会报错，但产物本身已就绪
+        continue-on-error: true
+        if: steps.disc-valid.outputs.ok != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: bin/disc
+          key: disc-v1-macos-arm64-${{ hashFiles('native/ffgui-disc/Cargo.toml', 'native/ffgui-disc/Cargo.lock', 'native/ffgui-disc/src/**') }}
 
       - name: 下载预编译 ffmpeg 并放入 bin/
         run: |

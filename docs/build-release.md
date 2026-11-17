@@ -136,5 +136,10 @@ node scripts/build-delta.cjs \
   的是 macOS 构建。
   Vulkan SDK 自解流程已按 1.4.363.1 本机完整验证（carve + 用其编出 Vulkan 版 tts-server），
   工作流里有 ggml 三件套布局校验，LunarG 再改打包格式会显式失败并回退 CPU 后端
+- 光盘侧车（ffgui-disc）：Rust 源码在仓库内 `native/ffgui-disc/`，**产物走 actions/cache**：
+  键为 `disc-v1-<平台>-<架构>-<Cargo.toml/Cargo.lock/src 哈希>`（`v1` 是手动失效位，
+  改缓存策略时递增），缓存 `bin/disc` 下的单文件二进制，命中即跳过 Rust 工具链安装
+  与编译（windows-arm64 连 clang 准备一起跳过），恢复后校验产物存在、缺失按未命中
+  重建；保存步骤同样带 `continue-on-error`
 - 仓库不提交 `bin/ffmpeg.exe`、`bin/aria2/` 等二进制，CI 每次现下；NSISBI 编译器同样不入库，
   构建时从 v0.1 Release 资源下载解压

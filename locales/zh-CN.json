@@ -39,6 +39,18 @@
     "featureSoonOpen": "「",
     "featureSoonClose": "」功能开发中，敬请期待。"
   },
+  "updater": {
+    "checking": "正在检查更新…",
+    "downloading": "发现新版本 {{version}}，正在下载更新… {{percent}}%",
+    "downloadingFull": "发现新版本 {{version}}，正在下载完整安装包… {{percent}}%",
+    "downloaded": "新版本 {{version}} 已就绪",
+    "applyNow": "立即重启更新",
+    "later": "稍后",
+    "applying": "正在重启并安装更新…",
+    "error": "更新失败，请稍后重试",
+    "errorBusy": "有任务正在执行，请完成任务或取消后再更新",
+    "closeTip": "关闭"
+  },
   "convert": {
     "title": "音视频转码 - FFGui",
     "heading": "音视频转码",

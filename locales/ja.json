@@ -39,6 +39,18 @@
     "cardImgconvTitle": "画像の変換",
     "cardImgconvDesc": "WebP / JPG / PNG / ICO などの画像形式に相互変換します"
   },
+  "updater": {
+    "checking": "アップデートを確認しています…",
+    "downloading": "新しいバージョン {{version}} が見つかりました。アップデートをダウンロード中… {{percent}}%",
+    "downloadingFull": "新しいバージョン {{version}} が見つかりました。完全なインストーラーをダウンロード中… {{percent}}%",
+    "downloaded": "バージョン {{version}} の準備ができました",
+    "applyNow": "再起動して更新",
+    "later": "後で",
+    "applying": "再起動してインストールしています…",
+    "error": "更新に失敗しました。しばらくしてから再試行してください",
+    "errorBusy": "タスクが実行中です。完了またはキャンセルしてから更新してください",
+    "closeTip": "閉じる"
+  },
   "convert": {
     "title": "音声・動画の変換 - FFGui",
     "heading": "音声・動画の変換",

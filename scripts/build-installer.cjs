@@ -185,4 +185,5 @@ if (require.main === module) {
   }
 }
 
-module.exports = { build };
+// build-delta.cjs 复用 NSISBI 定位与路径/版本处理（避免复制两份下载与 BOM 逻辑）
+module.exports = { build, ensureNsisbi, toNsisPath, makeViVersion };

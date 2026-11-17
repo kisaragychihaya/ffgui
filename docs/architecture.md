@@ -7,9 +7,16 @@
 ```
 index.js            主进程入口：BrowserWindow 1080x720（contextIsolation: true、
                     nodeIntegration: false），ready 后依次调用 main/ffmpeg.registerIpc()、
-                    main/disc.registerDiscIpc()、main/theme（initTheme + registerThemeIpc）；
-                    开发模式自动开 DevTools，打包后拦截 devtools-opened 强制关闭；
-                    窗口 close 在有任务执行时弹二次确认（见「窗口关闭拦截」）
+                    main/disc.registerDiscIpc()、main/theme（initTheme + registerThemeIpc）、
+                    main/updater.init()；开发模式自动开 DevTools，打包后拦截
+                    devtools-opened 强制关闭；窗口 close 在有任务执行时弹二次确认
+                    （见「窗口关闭拦截」）
+main/updater.js     应用自动更新（仅 win32 + app.isPackaged，其他平台 init 直接 no-op）：
+                    GitHub Release 检查（4 小时自动检查限频，last-check.json 持久化）、
+                    delta 适用性判定（manifest 契约见下节）、断点续传下载（.partial +
+                    Range）、sha256 校验（增量包，失败重下一次）、静默安装（spawn /S）。
+                    IPC ffgui:updater-check / updater-state / updater-apply，事件通道
+                    ffgui:updater-event；启动清理 userData/updates/ 下旧的安装包与半成品
 main/taskgate.js    窗口关闭拦截的任务聚合层：isBusy() 汇总 ffmpeg 任务 / 录屏写盘 / 光盘 /
                     CD / 配音是否在跑，cancelAll() 依次取消并丢弃半成品；单向依赖各任务
                     模块，各任务模块不得 require 本模块（防循环）
@@ -126,11 +133,13 @@ preload/preload.js  contextBridge 暴露 window.ffgui：platform、versions、ge
                     onThemeChanged、i18n（同步取回的词典快照）、setLanguage、onLanguageChanged、
                     discPickSource、discPickKeydb、discListDrives、discProbe、
                     discStart、discCancel、onDiscEvent、cdListDrives、cdProbe、cdLookup、
-                    cdReleaseTracks、cdStart、cdCancel、onCdEvent。除主题、语言与光盘 /
-                    CD 抓轨外与主进程 IPC 同名；新增 IPC 只在此暴露最小 API
-html/*.html         index（首页导航卡片 + 清除硬件信息缓存按钮）、convert、merge、clip、crop、
-                    record、disc（统一光盘页，手动选「视频光盘 / 音乐 CD」动态切换）、dub、imgconv
-                    （图片互转：源图片队列 + 目标格式/画质/输出目录 + 进度与日志）。
+                    cdReleaseTracks、cdStart、cdCancel、onCdEvent、updaterCheck、
+                    updaterState、updaterApply、onUpdaterEvent。除主题、语言、光盘 /
+                    CD 抓轨与自动更新外与主进程 IPC 同名；新增 IPC 只在此暴露最小 API
+html/*.html         index（首页导航卡片 + 顶部自动更新横幅 + 清除硬件信息缓存按钮）、convert、
+                    merge、clip、crop、record、disc（统一光盘页，手动选「视频光盘 /
+                    音乐 CD」动态切换）、dub、imgconv（图片互转：源图片队列 + 目标格式/
+                    画质/输出目录 + 进度与日志）。
                     CSP 统一为 default-src 'self'; style-src 'self';
                     script-src 'self'；clip/crop/record 额外放行 media-src 'self' blob: file:，
                     record 另放行 img-src 'self' data:（来源缩略图）
@@ -148,9 +157,9 @@ html/js/theme.js    在 i18n.js 之后、各页面脚本之前加载：监听 ma
                     theme.tipSystem/tipLight/tipDark）
 locales/<lng>.json  五个语言的界面词典（zh-CN / zh-TW / en / ja / ko，zh-CN 为回退与源文案）。
                     嵌套 JSON，键用点路径，命名空间与页面同名：common、theme、lang、home、
-                    convert、merge、clip、crop、record、disc、cd、dub、imgconv、main（主进程报错/
-                    对话框标题）。主进程与渲染层共用同一份文件；五语言键集合必须一致
-                    （scripts/i18n.test.cjs 校验）
+                    updater（首页更新横幅）、convert、merge、clip、crop、record、disc、cd、
+                    dub、imgconv、main（主进程报错/对话框标题）。主进程与渲染层共用同一份
+                    文件；五语言键集合必须一致（scripts/i18n.test.cjs 校验）
 html/js/convert.js  转码页：候选格式/编码器清单硬编码，按主进程探测结果过滤后填下拉框；设备预设
                     按 DEVICE_PRESETS 表锁定并填兼容参数（切回自定义时恢复原设置，提示文案与
                     帧率标签随预设变化），纯音频格式自动隐藏视频表单项；提交前校验分辨率与帧率
@@ -403,6 +412,38 @@ _cdp_debug.js       开发调试脚本（CDP 连渲染进程观察 video 加载�
   `ffgui:imgconv`（批量转换）/ `ffgui:imgconv-cancel`（复用 `cancelCurrentTask`）；
   事件通道 `ffgui:imgconv-event`，preload 对应 pickImageFiles / imgConvert /
   cancelImgConvert / onImgConvertEvent
+
+## 应用自动更新（main/updater.js）
+
+- 生效条件：`process.platform === 'win32'` 且 `app.isPackaged`，其他情况 `init()` 直接返回；
+  `index.js` 在 `createWindow()` 之前调用（i18n init 之后），因此首帧页面靠
+  `updaterState()` 同步状态，不依赖窗口创建前发出的广播
+- 启动清理：`userData/updates/` 下匹配 `delta-update-*.exe` / `delta-update-*.json` /
+  `*.partial` / `FFGui-*-Setup.exe` 的文件一律删除，但 `pending.json` 指向的已下载包保留
+  （「稍后」后下次启动仍提示「已就绪」）；`pending.json` 里版本不再新于当前版本时连包一起删
+- 检查：GET `https://api.github.com/repos/kisaragychihaya/ffgui/releases/latest`，必须带
+  User-Agent；`tag_name` 去 `v` 前缀与 `app.getVersion()` 按 semver 比较（自写
+  `compareVersions`，支持预发布标识）。自动检查每次启动最多一次，距 `last-check.json`
+  记录的检查时间 < 4 小时则跳过；手动检查（IPC）不受限
+- delta 适用性：manifest（`delta-update-<ver>-<arch>.json`）的 `schema=1`、
+  `fromVersion === app.getVersion()`、`arch === process.arch`、`package`/`packageSha256`
+  合法，且 `files` 中每条 `method=xdelta3` 的 `sourceSha256` 等于安装目录对应文件的实际
+  sha256；任一不满足改下 `fullSetup` 全量包。安装目录取 `path.dirname(app.getPath('exe'))`
+  （NSIS 每用户安装目录，等价于卸载注册表 `InstallLocation`）；清单路径必须是安装目录内的
+  相对路径（拒绝绝对路径与 `..`）
+- 下载：目标文件名沿用资产名，先写 `<target>.partial`；存在 `.partial` 时带 `Range` 续传，
+  服务端不返回 206 或起点不一致则从头下载；进度按已接收字节 / Content-Length 推送；增量包
+  用 `packageSha256` 校验，失败删除重下一次，再失败报 `FFGUI_UPDATE_VERIFY`（全量包无哈希可
+  校验时跳过）。下载失败保留 `.partial` 供本次会话内再次检查时续传
+- 状态：`checking / available / downloading / downloaded / applying / error / none`，经
+  `ffgui:updater-event` 广播所有窗口，payload 字段为 `state` 与可选的 `version` / `apply`
+  (`delta|full`) / `progress` (0..1) / `error`（`FFGUI_UPDATE_NETWORK|VERIFY|BUSY|SPAWN`）
+- 安装：`applyUpdate()` 先查 `taskgate.isBusy()`，忙则发 `FFGUI_UPDATE_BUSY` 不安装；空闲则
+  `spawn(已下载安装包, ['/S'], { detached: true, stdio: 'ignore' })`，在 `spawn` 事件后
+  `unref()` 并 `app.quit()`（进程起不来则发 `FFGUI_UPDATE_SPAWN`，不退出）
+- 首页横幅（`html/index.html` + `html/js/index.js`）：紧凑一行、非弹窗，文案全部走
+  `updater.*`；`downloaded` 显示「立即重启更新 / 稍后」，点「稍后」记入 sessionStorage，
+  同一窗口会话内不再提示；`error` 只显示可读文案与关闭按钮，错误码仅进控制台
 
 ## 音轨与输出规则（修复后）
 

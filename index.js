@@ -84,6 +84,8 @@ app.whenReady().then(() => {
   const theme = require('./main/theme');
   theme.initTheme();
   theme.registerThemeIpc();
+  // 应用自动更新（仅 Windows 安装版）：清理旧安装包、检查更新并注册 IPC
+  require('./main/updater').init();
 
   createWindow();
 

@@ -5,7 +5,8 @@
 ## 测试方式
 
 `npm test` 跑 `scripts/regression.test.cjs` + `scripts/i18n.test.cjs` + `scripts/cdrip.test.cjs`
-+ `scripts/cd-ui.test.cjs` + `scripts/dub.test.cjs` + `scripts/imgconv.test.cjs`，生成独立
++ `scripts/cd-ui.test.cjs` + `scripts/dub.test.cjs` + `scripts/imgconv.test.cjs`
++ `scripts/updater.test.cjs` + `scripts/build-delta.test.cjs`，生成独立
 临时媒体并自动清理；字幕配音（dub）的专项测试是 `scripts/dub.test.cjs`（主进程：引擎路径解析、
 ffmpeg 命令组装、字幕条目解析与时间轴
 换算、模型下载的 https/aria2 两条路径与内置 aria2c 路径解析——aria2 用注入的假 spawn，
@@ -42,6 +43,17 @@ ipcMain.handle 与文件对话框）和假 `child_process.spawn`，断言八种�
 画质档、`-frames:v 1` / `-n` / `-progress pipe:1` / 输出路径、-update 与 ico 缩放参数，
 并覆盖批量任务、取消、IPC 注册；最后一个用例用 `FFMPEG` 或 `bin/ffmpeg.exe` 实跑
 lavfi PNG → ICO，验证文件存在且能按 ico 解码（没有 ffmpeg 时自动跳过）。
+应用自动更新（`updater.test.cjs`）用 vm + mock electron 加载 `main/updater.js`（`https` /
+`child_process.spawn` / `./taskgate` 均为桩，不 require 真实 electron、不联网）：覆盖
+semver 比较、delta 适用性（fromVersion / arch / packageSha256 / 源文件哈希，任一不符即
+回退 full）、Range 断点续传（206 追加、200 从头覆盖、416 丢弃半成品重试）、下载完成
+sha256 失败重试与最终 `FFGUI_UPDATE_VERIFY`、4 小时自动检查限频、启动清理（保留
+`pending.json` 指向的包、删其余旧包/半成品）、apply 的 `FFGUI_UPDATE_BUSY` /
+`FFGUI_UPDATE_SPAWN` 与状态事件 payload 契约（state 取值集合、apply delta|full、
+progress 0..1）。增量包生成（`build-delta.test.cjs`）同样 vm 加载并 mock `spawnSync`：
+`scanDiff` 差异分类、`assignPatchNames` basename 冲突改名、`renderDeltaNsh` 顺序与 `$`
+转义、xdelta3 不可用或回放哈希不一致时回退 copy、补丁成功时的 manifest 与 payload 布局；
+不依赖真实 xdelta3 与 makensis。
 多语言改动后另需 `npm start` 逐页切换语言核对（含主进程报错与文件对话框标题）。手工验证：
 `npm start` 后用 `test_media/` 示例文件走一遍转码（含拖拽、取消、进度），观察主进程 `[ffgui]` /
 `[ffmpeg]` 日志；录屏页验证录制（含系统声音/麦克风勾选、取消清理半成品、转 MP4）；
@@ -59,6 +71,12 @@ aria2c 时，应自动回退内置 https 下载）、
 原声，+12 dB 配音明显压过原声）、未勾选时音量输入应禁用且提示行切回「原音轨保留」那段；
 图片互转页验证八种格式互转（含动图只取首帧、jpg/webp 画质档、ico 自动限 256 边长）、
 批量队列与不覆盖已有文件、取消后不残留半成品；
+自动更新（仅 Windows 安装包版本生效，开发模式与 macOS/Linux 是 no-op）验证：装好旧版本后
+启动，`userData/updates/` 出现 `*.partial`，下载完成后保留安装包与 `pending.json`；首页横幅
+进度推进，`downloaded` 时点「立即重启更新」前先跑一个任务应提示忙、任务结束后即可静默安装；
+点「稍后」后切换页面再回首页不再提示（同一窗口会话），重启应用仍提示「已就绪」；升级完成后
+旧包与 `pending.json` 被清理；断网启动只在主进程留 `[ffgui]` 日志、不弹横幅；手动检查失败
+才显示错误行；
 任务执行中点窗口右上角关闭按钮应弹二次确认：选「继续任务」留在页面且任务照常跑完，
 选「取消任务并退出」后任务被取消、半成品被清理（录屏录制中应删除未完成的 webm）、窗口退出。
 

@@ -20,6 +20,58 @@
 `npm test` 用 Node 内置测试运行器（`scripts/regression.test.cjs`），需 PATH 中有 ffmpeg/ffprobe
 或设置 `FFMPEG` / `FFPROBE`。没有 lint/format 配置。
 
+## 增量更新包（Windows delta update）
+
+发版时除全量安装包外，还会对上一个正式 Release 生成 `delta-update-<版本>-<arch>.exe`
+（就地补丁安装器）与 `delta-update-<版本>-<arch>.json`（清单），由
+`scripts/build-delta.cjs` 生成、`assets/delta-installer.nsi` 编译，CI 只在
+`windows` / `windows-arm64` 两个 job 的 Release 触发时执行（macOS 不涉及）。
+客户端 `main/updater.js` 读取该清单：`fromVersion` 等于当前版本、`arch` 匹配、
+每个 `xdelta3` 条目的 `sourceSha256` 与本地文件一致时才下载增量包，否则回退全量安装包。
+
+本地/CI 用法：
+
+```bash
+node scripts/build-delta.cjs \
+  --app-dir out/FFGui-win32-x64 \
+  --prev-dir <上一个 Release 的 unpacked 目录> \
+  --xdelta3 <xdelta3.exe> \
+  --out-dir out/make/delta/x64 \
+  --arch x64 --version 0.7.5 --from-version 0.7.4
+```
+
+- 递归对比两目录的相对路径（正斜杠）：新增/变更写入 `payload/`，删除写入 `removed`；
+  内容一致的文件不会进包。
+- `size > 1MB` 的变更文件优先用 `xdelta3 -f -e -S lzma -9 -s 旧 新 patch` 生成补丁，
+  **生成后立刻回放**并与新文件 sha256 比对；xdelta3 缺失/超时/失败/回放不一致时该文件
+  回退 `method=copy`（全量打进包里）。补丁名默认用 basename，不同目录同名时改用
+  `path.replace(/\//g,'__')`，实际名写入 `manifest.patch`。
+- `payload/` 下：全量文件按相对路径镜像、补丁平铺在 `patches/`、`xdelta3.exe` 在根；
+  `delta-files.nsh` 由脚本生成（补丁 → 全量覆盖 → 删除），由安装器 `!include` 展开。
+- 清单契约（字段名不得改）：`schema/version/fromVersion/arch/package/packageSha256/
+  fullSetup/files[]/removed[]`。`packageSha256` 在安装包编译完成后回填；
+  `delta-update-<版本>-<arch>.json` 即 Release 资产名，另存一份 `manifest.json` 便于排查。
+- 安装器行为顺序：读 HKCU 卸载注册表 `InstallLocation`（读不到/目录无 `FFGui.exe`/
+  `DisplayVersion != fromVersion` 均退出 1，静默时写 `%TEMP%\ffgui-delta-update.log`）
+  → `taskkill /F /IM FFGui.exe /T` + `Sleep 2000` → 解 `xdelta3.exe` 到 `$PLUGINSDIR`
+  → 逐条补丁（源文件与补丁复制到 `$PLUGINSDIR`，用纯 ASCII 相对文件名调用 xdelta3
+  解码——xdelta3 3.1.0 是 ANSI argv，不能直接接触含中文的安装路径；校验产物存在后用
+  NSIS 覆盖回原文件；失败即退出，此前只应用了更早的补丁，小文件尚未覆盖）→ 逐条全量覆盖
+  → 逐条 `Delete /REBOOTOK` 旧文件
+  → 只更新 `DisplayVersion` 与 `EstimatedSize`（`InstallLocation`/快捷方式/卸载器不动）
+  → 写 `$INSTDIR\delta-update.log`（ANSI/系统代码页）→ 静默模式重启应用，非静默弹窗。
+- 退出码：成功 0，失败非 0；`/S` 由客户端自动更新调用，不带参数运行也会执行并在结束时弹窗。
+- CI 步骤：查上一个正式 Release（非 draft/prerelease）→ 下载其 `FFGui-windows-<arch>.7z`
+  与 `FFGui-<旧版本>-<arch>-Setup.exe`、下载 xdelta3（资产实名
+  `xdelta3-3.1.0-x86_64.exe.zip`，解压后重命名）→ 生成 → x64 额外跑冒烟
+  （静默装旧版 → delta → 校验 FFGui.exe/app.asar 哈希、`DisplayVersion`、快捷方式目标
+  未变 → 卸载）→ 上传 artifact 与 Release Assets。所有下载/解压都在 `$RUNNER_TEMP`；
+  任一步失败或上一个 Release 缺产物只跳过增量包，不影响全量发版。
+- 已知限制：`fromVersion` 取上一个 Release 的 tag（去 `v`），因此 tag 必须与
+  `package.json` 版本一致，否则客户端判定不适用并回退全量；补丁按文件逐个替换，
+  第二个补丁失败时前面的补丁已生效（xdelta3 会校验目标，失败概率低）；补丁阶段的
+  失败不会覆盖小文件，旧版仍可启动。
+
 ## 部署 / CI
 
 `.github/workflows/build.yml`（workflow_dispatch 手动触发、发布 Release 时触发，

@@ -11,6 +11,20 @@
 <body>
   <!-- 功能导航首页 -->
   <main id="home-view" class="view">
+    <!-- 自动更新横幅：状态由首页脚本按主进程事件驱动 -->
+    <section id="update-banner" class="update-banner hidden" aria-live="polite">
+      <span id="update-banner-text" class="update-banner-text"></span>
+      <span class="update-banner-actions">
+        <button id="update-banner-apply" class="btn btn-primary update-banner-btn hidden" type="button"
+                data-i18n="updater.applyNow">立即重启更新</button>
+        <button id="update-banner-later" class="btn btn-plain update-banner-btn hidden" type="button"
+                data-i18n="updater.later">稍后</button>
+        <button id="update-banner-close" class="update-banner-close hidden" type="button"
+                data-i18n-attr="title:updater.closeTip;aria-label:updater.closeTip" title="关闭"
+                aria-label="关闭">×</button>
+      </span>
+    </section>
+
     <header class="hero">
       <h1 data-i18n="home.heroTitle">音视频工具箱</h1>
     </header>

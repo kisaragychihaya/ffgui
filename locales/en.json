@@ -39,6 +39,18 @@
     "cardImgconvTitle": "Convert Images",
     "cardImgconvDesc": "Convert between WebP / JPG / PNG / ICO and other image formats"
   },
+  "updater": {
+    "checking": "Checking for updates…",
+    "downloading": "New version {{version}} found, downloading update… {{percent}}%",
+    "downloadingFull": "New version {{version}} found, downloading the full installer… {{percent}}%",
+    "downloaded": "Version {{version}} is ready",
+    "applyNow": "Restart and update",
+    "later": "Later",
+    "applying": "Restarting to install the update…",
+    "error": "Update failed, please try again later",
+    "errorBusy": "A task is running. Finish or cancel it before updating",
+    "closeTip": "Close"
+  },
   "convert": {
     "title": "Convert Audio/Video - FFGui",
     "heading": "Convert Audio/Video",

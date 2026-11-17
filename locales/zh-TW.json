@@ -39,6 +39,18 @@
     "cardImgconvTitle": "圖片轉換",
     "cardImgconvDesc": "在 WebP / JPG / PNG / ICO 等圖片格式之間互轉"
   },
+  "updater": {
+    "checking": "正在檢查更新…",
+    "downloading": "發現新版本 {{version}}，正在下載更新… {{percent}}%",
+    "downloadingFull": "發現新版本 {{version}}，正在下載完整安裝包… {{percent}}%",
+    "downloaded": "新版本 {{version}} 已就緒",
+    "applyNow": "立即重新啟動並更新",
+    "later": "稍後",
+    "applying": "正在重新啟動並安裝更新…",
+    "error": "更新失敗，請稍後再試",
+    "errorBusy": "有工作正在執行，請完成或取消後再更新",
+    "closeTip": "關閉"
+  },
   "convert": {
     "title": "影音轉檔 - FFGui",
     "heading": "影音轉檔",

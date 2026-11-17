@@ -278,6 +278,219 @@ jobs:
       - name: 生成 NSIS 安装包
         run: node scripts/build-installer.cjs --app-dir out/FFGui-win32-x64 --arch x64
 
+      # ---- 增量更新包（仅 Release 触发）----
+      # 与上一个正式 Release 的 unpacked 产物逐文件对比，生成
+      # delta-update-<版本>-x64.exe + delta-update-<版本>-x64.json。
+      # 任何一步失败只跳过 delta（全量安装包兜底），不阻断发版；旧版 7z 与 xdelta3
+      # 全部解到 $RUNNER_TEMP，绝不在仓库根目录留大目录（AGENTS.md 陷阱）。
+      - name: 查找上一个正式 Release
+        if: github.event_name == 'release'
+        id: prev-release
+        shell: bash
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_TAG: ${{ github.ref_name }}
+          ARCH: x64
+          WORK: ${{ runner.temp }}/ffgui-delta-prev
+        run: |
+          set -u
+          rm -rf "$WORK"
+          mkdir -p "$WORK"
+          skip=true
+          if curl -fsSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/kisaragychihaya/ffgui/releases?per_page=100" \
+            -o "$WORK/releases.json"; then
+            # 取列表里第一个「非草稿、非预发布、且不是本次 tag」的 Release 作为增量基线
+            if node -e '
+          const fs = require("fs");
+          const list = JSON.parse(fs.readFileSync(process.env.WORK + "/releases.json", "utf8"));
+          if (!Array.isArray(list)) throw new Error(list.message || "releases 不是数组");
+          const prev = list.find((r) => !r.draft && !r.prerelease && r.tag_name !== process.env.CURRENT_TAG);
+          if (!prev) throw new Error("没有更早的正式 Release");
+          const arch = process.env.ARCH;
+          const assets = prev.assets || [];
+          const z7 = assets.find((a) => a.name === "FFGui-windows-" + arch + ".7z");
+          if (!z7) throw new Error(prev.tag_name + " 没有 FFGui-windows-" + arch + ".7z");
+          const setup = assets.find((a) => a.name.endsWith("-" + arch + "-Setup.exe"));
+          const lines = [
+            "prev_version=" + prev.tag_name.replace(/^v/, ""),
+            "prev_tag=" + prev.tag_name,
+            "prev_7z=" + z7.browser_download_url,
+            "prev_setup=" + (setup ? setup.browser_download_url : ""),
+          ];
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, lines.join("\n") + "\n");
+          '; then
+              skip=false
+            else
+              echo '警告：没有可用的上一个正式 Release，跳过增量包'
+            fi
+          else
+            echo '警告：查询 Release 列表失败，跳过增量包'
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
+      - name: 下载旧版产物与 xdelta3
+        if: github.event_name == 'release' && steps.prev-release.outputs.skip == 'false'
+        id: delta-inputs
+        shell: bash
+        continue-on-error: true
+        env:
+          WORK: ${{ runner.temp }}/ffgui-delta-prev
+          PREV_7Z: ${{ steps.prev-release.outputs.prev_7z }}
+        run: |
+          set -u
+          prev_dir=''
+          xdelta3=''
+          if curl -fsSL --retry 3 -o "$WORK/prev.7z" "$PREV_7Z" \
+             && 7z x -y "$WORK/prev.7z" -o"$WORK/prev-app" > /dev/null; then
+            exe=$(find "$WORK/prev-app" -maxdepth 3 -name FFGui.exe -type f -print -quit)
+            if [ -n "$exe" ] && [ -f "$(dirname "$exe")/resources/app.asar" ]; then
+              prev_dir=$(dirname "$exe")
+            else
+              echo '警告：旧版 7z 中未找到完整的 unpacked 目录'
+            fi
+          else
+            echo '警告：下载/解压旧版 7z 失败'
+          fi
+          # 官方资产名是 xdelta3-3.1.0-x86_64.exe.zip（不是 win32.x86-64），
+          # 解压后文件名带版本号，统一复制成 xdelta3.exe；arm64 runner 经系统模拟执行
+          if curl -fsSL --retry 3 -o "$WORK/xdelta3.zip" \
+            "https://github.com/jmacd/xdelta-gpl/releases/download/v3.1.0/xdelta3-3.1.0-x86_64.exe.zip" \
+            && 7z x -y "$WORK/xdelta3.zip" -o"$WORK/xdelta3" > /dev/null; then
+            xd=$(find "$WORK/xdelta3" -maxdepth 2 -name 'xdelta3*.exe' -type f -print -quit)
+            if [ -n "$xd" ] && cp "$xd" "$WORK/xdelta3.exe" && "$WORK/xdelta3.exe" -V > /dev/null; then
+              xdelta3="$WORK/xdelta3.exe"
+            else
+              echo '警告：xdelta3 解压/执行失败（arm64 runner 依赖系统模拟）'
+            fi
+          else
+            echo '警告：下载 xdelta3 失败，大文件将回退全量覆盖'
+          fi
+          echo "prev_dir=$prev_dir" >> "$GITHUB_OUTPUT"
+          echo "xdelta3=$xdelta3" >> "$GITHUB_OUTPUT"
+
+      - name: 生成增量更新包
+        if: github.event_name == 'release' && steps.delta-inputs.outputs.prev_dir != '' && steps.delta-inputs.outputs.xdelta3 != ''
+        id: delta
+        shell: bash
+        # 增量包是加分项：生成失败只跳过上传，不阻断发版
+        continue-on-error: true
+        env:
+          PREV_DIR: ${{ steps.delta-inputs.outputs.prev_dir }}
+          XDELTA3: ${{ steps.delta-inputs.outputs.xdelta3 }}
+          FROM_VERSION: ${{ steps.prev-release.outputs.prev_version }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          node scripts/build-delta.cjs \
+            --app-dir out/FFGui-win32-x64 \
+            --prev-dir "$PREV_DIR" \
+            --xdelta3 "$XDELTA3" \
+            --out-dir out/make/delta/x64 \
+            --arch x64 \
+            --version "$version" \
+            --from-version "$FROM_VERSION"
+
+      # 增量包冒烟：静默装旧版 → 跑 delta → 校验关键文件哈希、注册表版本、快捷方式
+      # 仍指向安装目录；失败只跳过增量包上传（全量安装包仍然有效）
+      - name: 增量包冒烟测试（旧版 → delta → 校验 → 卸载）
+        if: github.event_name == 'release' && steps.delta.outcome == 'success'
+        id: delta-smoke
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $setupUrl = '${{ steps.prev-release.outputs.prev_setup }}'
+          if (-not $setupUrl) {
+            Write-Warning '上一个 Release 没有 Setup.exe，跳过增量包冒烟'
+            exit 0
+          }
+          $work = Join-Path $env:RUNNER_TEMP 'ffgui-delta-smoke'
+          $dir = Join-Path $work 'install'
+          $setupFile = Join-Path $env:RUNNER_TEMP 'ffgui-delta-prev\prev-setup.exe'
+          Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $work | Out-Null
+          curl.exe -fL --retry 3 -o $setupFile $setupUrl
+          if ($LASTEXITCODE -ne 0) { throw '下载旧版 Setup.exe 失败' }
+
+          $p = Start-Process -FilePath $setupFile -ArgumentList '/S', "/D=$dir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "旧版安装退出码 $($p.ExitCode)" }
+          $oldVersion = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ffgui').DisplayVersion
+          if ($oldVersion -ne '${{ steps.prev-release.outputs.prev_version }}') {
+            throw "旧版 DisplayVersion=$oldVersion 与 Release tag 推导的版本不一致"
+          }
+
+          $delta = Get-ChildItem out/make/delta/x64/delta-update-*.exe -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $delta) { throw '未找到增量安装包' }
+          $p = Start-Process -FilePath $delta.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "增量安装退出码 $($p.ExitCode)" }
+
+          # 静默模式会在最后重启应用；Exec 是异步的，轮询几次确保进程退出，
+          # 否则会占用文件影响哈希校验与卸载
+          Start-Sleep -Seconds 1
+          for ($i = 0; $i -lt 10; $i++) {
+            $proc = Get-Process FFGui -ErrorAction SilentlyContinue
+            if (-not $proc) { break }
+            $proc | Stop-Process -Force
+            Start-Sleep -Milliseconds 500
+          }
+
+          # 关键文件哈希必须等于新 unpacked 产物（轮询等待文件落盘/杀软放行）
+          foreach ($f in @('FFGui.exe', 'resources\app.asar')) {
+            $expected = (Get-FileHash (Join-Path 'out/FFGui-win32-x64' $f) -Algorithm SHA256).Hash
+            $target = Join-Path $dir $f
+            $ok = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              if ((Test-Path $target) -and ((Get-FileHash $target -Algorithm SHA256).Hash -eq $expected)) {
+                $ok = $true
+                break
+              }
+              Start-Sleep -Seconds 1
+            }
+            if (-not $ok) { throw "$f 哈希与新版本不一致" }
+          }
+
+          $newVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $reg = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ffgui'
+          if ($reg.DisplayVersion -ne $newVersion) {
+            throw "增量后 DisplayVersion=$($reg.DisplayVersion)，期望 $newVersion"
+          }
+          if ($reg.InstallLocation -ne $dir) {
+            throw "InstallLocation 被改动：$($reg.InstallLocation)"
+          }
+
+          # 快捷方式不得改动：仍指向原安装目录
+          $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) '狒狒格式工具箱.lnk'
+          if (-not (Test-Path $lnk)) { throw "桌面快捷方式丢失：$lnk" }
+          $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
+          if ($target -ne (Join-Path $dir 'FFGui.exe')) {
+            throw "桌面快捷方式指向被改动：$target"
+          }
+          Write-Host '增量包冒烟通过'
+
+          # 卸载清理（增量安装器刻意不碰卸载器/快捷方式）
+          Start-Process -FilePath (Join-Path $dir 'uninstall.exe') -ArgumentList '/S' -Wait
+          for ($i = 0; $i -lt 30 -and (Test-Path (Join-Path $dir 'FFGui.exe')); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path (Join-Path $dir 'FFGui.exe')) { throw '卸载后仍残留安装目录' }
+          if (Test-Path $lnk) { throw '卸载后仍残留桌面快捷方式' }
+
+      - name: 上传增量包产物
+        if: github.event_name == 'release' && steps.delta.outcome == 'success' && steps.delta-smoke.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFGui-windows-x64-delta
+          path: |
+            out/make/delta/x64/delta-update-*.exe
+            out/make/delta/x64/delta-update-*.json
+
+      - name: 上传增量包到 Release（仅 Release 触发时）
+        if: github.event_name == 'release' && steps.delta.outcome == 'success' && steps.delta-smoke.outcome == 'success'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/make/delta/x64/delta-update-*.exe
+            out/make/delta/x64/delta-update-*.json
+
       # 安装包冒烟测试：静默装到临时目录，确认「装完东西还在」。
       # 卸载段若被写成非字面量 "Uninstall" 的段名，NSIS 会把它当普通安装段在装完后立刻执行，
       # 文件/快捷方式/卸载项被删光而退出码仍是 0 —— 只有真装一次才能发现。
@@ -655,6 +868,130 @@ jobs:
 
       - name: 生成 NSIS 安装包
         run: node scripts/build-installer.cjs --app-dir out/FFGui-win32-arm64 --arch arm64
+
+      # ---- 增量更新包（仅 Release 触发，arm64 不跑冒烟）----
+      # 旧版 7z 与 xdelta3 都解到 $RUNNER_TEMP；xdelta3 用 x64 版，Win11 ARM 经系统模拟执行。
+      # 任何一步失败只跳过 delta，不阻断发版（全量安装包兜底）。
+      - name: 查找上一个正式 Release（arm64）
+        if: github.event_name == 'release'
+        id: prev-release
+        shell: bash
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_TAG: ${{ github.ref_name }}
+          ARCH: arm64
+          WORK: ${{ runner.temp }}/ffgui-delta-prev
+        run: |
+          set -u
+          rm -rf "$WORK"
+          mkdir -p "$WORK"
+          skip=true
+          if curl -fsSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/kisaragychihaya/ffgui/releases?per_page=100" \
+            -o "$WORK/releases.json"; then
+            if node -e '
+          const fs = require("fs");
+          const list = JSON.parse(fs.readFileSync(process.env.WORK + "/releases.json", "utf8"));
+          if (!Array.isArray(list)) throw new Error(list.message || "releases 不是数组");
+          const prev = list.find((r) => !r.draft && !r.prerelease && r.tag_name !== process.env.CURRENT_TAG);
+          if (!prev) throw new Error("没有更早的正式 Release");
+          const arch = process.env.ARCH;
+          const assets = prev.assets || [];
+          const z7 = assets.find((a) => a.name === "FFGui-windows-" + arch + ".7z");
+          if (!z7) throw new Error(prev.tag_name + " 没有 FFGui-windows-" + arch + ".7z");
+          const setup = assets.find((a) => a.name.endsWith("-" + arch + "-Setup.exe"));
+          const lines = [
+            "prev_version=" + prev.tag_name.replace(/^v/, ""),
+            "prev_tag=" + prev.tag_name,
+            "prev_7z=" + z7.browser_download_url,
+            "prev_setup=" + (setup ? setup.browser_download_url : ""),
+          ];
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, lines.join("\n") + "\n");
+          '; then
+              skip=false
+            else
+              echo '警告：没有可用的上一个正式 Release，跳过增量包'
+            fi
+          else
+            echo '警告：查询 Release 列表失败，跳过增量包'
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
+      - name: 下载旧版产物与 xdelta3（arm64）
+        if: github.event_name == 'release' && steps.prev-release.outputs.skip == 'false'
+        id: delta-inputs
+        shell: bash
+        continue-on-error: true
+        env:
+          WORK: ${{ runner.temp }}/ffgui-delta-prev
+          PREV_7Z: ${{ steps.prev-release.outputs.prev_7z }}
+        run: |
+          set -u
+          prev_dir=''
+          xdelta3=''
+          if curl -fsSL --retry 3 -o "$WORK/prev.7z" "$PREV_7Z" \
+             && 7z x -y "$WORK/prev.7z" -o"$WORK/prev-app" > /dev/null; then
+            exe=$(find "$WORK/prev-app" -maxdepth 3 -name FFGui.exe -type f -print -quit)
+            if [ -n "$exe" ] && [ -f "$(dirname "$exe")/resources/app.asar" ]; then
+              prev_dir=$(dirname "$exe")
+            else
+              echo '警告：旧版 7z 中未找到完整的 unpacked 目录'
+            fi
+          else
+            echo '警告：下载/解压旧版 7z 失败'
+          fi
+          if curl -fsSL --retry 3 -o "$WORK/xdelta3.zip" \
+            "https://github.com/jmacd/xdelta-gpl/releases/download/v3.1.0/xdelta3-3.1.0-x86_64.exe.zip" \
+            && 7z x -y "$WORK/xdelta3.zip" -o"$WORK/xdelta3" > /dev/null; then
+            xd=$(find "$WORK/xdelta3" -maxdepth 2 -name 'xdelta3*.exe' -type f -print -quit)
+            if [ -n "$xd" ] && cp "$xd" "$WORK/xdelta3.exe" && "$WORK/xdelta3.exe" -V > /dev/null; then
+              xdelta3="$WORK/xdelta3.exe"
+            else
+              echo '警告：xdelta3 解压/执行失败（arm64 runner 依赖系统模拟）'
+            fi
+          else
+            echo '警告：下载 xdelta3 失败，大文件将回退全量覆盖'
+          fi
+          echo "prev_dir=$prev_dir" >> "$GITHUB_OUTPUT"
+          echo "xdelta3=$xdelta3" >> "$GITHUB_OUTPUT"
+
+      - name: 生成增量更新包（arm64）
+        if: github.event_name == 'release' && steps.delta-inputs.outputs.prev_dir != '' && steps.delta-inputs.outputs.xdelta3 != ''
+        id: delta
+        shell: bash
+        continue-on-error: true
+        env:
+          PREV_DIR: ${{ steps.delta-inputs.outputs.prev_dir }}
+          XDELTA3: ${{ steps.delta-inputs.outputs.xdelta3 }}
+          FROM_VERSION: ${{ steps.prev-release.outputs.prev_version }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          node scripts/build-delta.cjs \
+            --app-dir out/FFGui-win32-arm64 \
+            --prev-dir "$PREV_DIR" \
+            --xdelta3 "$XDELTA3" \
+            --out-dir out/make/delta/arm64 \
+            --arch arm64 \
+            --version "$version" \
+            --from-version "$FROM_VERSION"
+
+      - name: 上传增量包产物（arm64）
+        if: github.event_name == 'release' && steps.delta.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFGui-windows-arm64-delta
+          path: |
+            out/make/delta/arm64/delta-update-*.exe
+            out/make/delta/arm64/delta-update-*.json
+
+      - name: 上传增量包到 Release（arm64）
+        if: github.event_name == 'release' && steps.delta.outcome == 'success'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/make/delta/arm64/delta-update-*.exe
+            out/make/delta/arm64/delta-update-*.json
 
       - name: 压缩产物
         shell: pwsh

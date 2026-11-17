@@ -153,4 +153,14 @@ contextBridge.exposeInMainWorld('ffgui', {
     ipcRenderer.on('ffgui:language-changed', listener);
     return () => ipcRenderer.removeListener('ffgui:language-changed', listener);
   },
+
+  // 应用自动更新（仅 Windows 安装版）：检查更新 / 当前状态 / 立即安装 / 状态事件
+  updaterCheck: () => ipcRenderer.invoke('ffgui:updater-check'),
+  updaterState: () => ipcRenderer.invoke('ffgui:updater-state'),
+  updaterApply: () => ipcRenderer.invoke('ffgui:updater-apply'),
+  onUpdaterEvent: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('ffgui:updater-event', listener);
+    return () => ipcRenderer.removeListener('ffgui:updater-event', listener);
+  },
 });

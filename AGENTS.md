@@ -13,7 +13,7 @@ FFGui 是基于 Electron 的桌面音视频工具箱（GUI for FFmpeg），LGPL-
 
 ## 目录地图（速览）
 
-- `index.js` + `main/*.js` — 主进程：ffmpeg.js 核心（探测/转码/合并/截取/录屏），disc.js + Rust 侧车（光盘），cdrip.js（CD），imgconv.js（图片互转），dub.js（TTS 配音），theme.js / i18n.js
+- `index.js` + `main/*.js` — 主进程：ffmpeg.js 核心（探测/转码/合并/截取/录屏），disc.js + Rust 侧车（光盘），cdrip.js（CD），imgconv.js（图片互转），dub.js（TTS 配音），updater.js（Windows 自动更新），theme.js / i18n.js
 - `preload/preload.js` — contextBridge，渲染层唯一能力入口 `window.ffgui`，新增 IPC 只暴露最小 API
 - `html/` — 渲染层页面与脚本；`locales/` — 五语言词典；每个页面最先加载 `html/js/i18n.js` 再 `theme.js`
 - `native/` — Rust 光盘侧车（ffgui-disc）与 TTS 引擎源码子模块（qwentts.cpp，需 --recurse-submodules）
@@ -46,7 +46,7 @@ FFGui 是基于 Electron 的桌面音视频工具箱（GUI for FFmpeg），LGPL-
 ## 构建与测试速查
 
 - `npm install` / `npm start`（开发）/ `npm run package` / `npm run make`（NSIS 安装包）
-- `npm test` — regression + i18n + cdrip + cd-ui + dub + imgconv（需 PATH 有 ffmpeg/ffprobe 或 `FFMPEG` / `FFPROBE` 环境变量）
+- `npm test` — regression + i18n + cdrip + cd-ui + dub + imgconv + updater + build-delta（需 PATH 有 ffmpeg/ffprobe 或 `FFMPEG` / `FFPROBE` 环境变量；updater/build-delta 为 vm+mock 测试，不依赖 ffmpeg）
 - 光盘侧车与页面专项：`node --test scripts/disc.test.cjs scripts/disc-sidecar.test.cjs scripts/disc-ui.test.cjs`；Rust 侧车 `cd native/ffgui-disc && cargo test --locked`
 - TTS 引擎编译：`node scripts/build-tts.cjs [--backend vulkan|cpu] [--arch x64|arm64] [--no-native]`（分发构建必须 `--no-native`）
 - 发布与 CI 细节见 **docs/build-release.md**；测试体系、手工验证清单、已知限制见 **docs/testing.md**

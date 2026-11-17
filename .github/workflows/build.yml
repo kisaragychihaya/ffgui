@@ -465,6 +465,13 @@ jobs:
             throw "旧版 DisplayVersion=$oldVersion 与 Release tag 推导的版本不一致"
           }
 
+          # 快捷方式基线：增量安装器刻意不碰快捷方式，delta 后逐字节比对确认未动。
+          # 不用 WScript.Shell 读 TargetPath 断言指向——该 COM 调用在 windows runner 上
+          # 对刚写入的 lnk 稳定返回空串（本机正常），连续两次发版误拦截，见提交历史
+          $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) '狒狒格式工具箱.lnk'
+          if (-not (Test-Path $lnk)) { throw "旧版未创建桌面快捷方式：$lnk" }
+          $lnkHash = (Get-FileHash $lnk -Algorithm SHA256).Hash
+
           $delta = Get-ChildItem out/make/delta/x64/delta-update-*.exe -ErrorAction SilentlyContinue |
             Select-Object -First 1
           if (-not $delta) { throw '未找到增量安装包' }
@@ -506,19 +513,15 @@ jobs:
             throw "InstallLocation 被改动：$($reg.InstallLocation)"
           }
 
-          # 快捷方式不得改动：仍指向原安装目录。
-          # WScript.Shell 读刚写入的 lnk 在 runner 上偶发返回空 TargetPath
-          # （Defender/索引扫描临时占用），按上面哈希校验同款模式轮询重试
-          $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) '狒狒格式工具箱.lnk'
-          if (-not (Test-Path $lnk)) { throw "桌面快捷方式丢失：$lnk" }
-          $expectedTarget = Join-Path $dir 'FFGui.exe'
-          $target = $null
-          for ($i = 0; $i -lt 20; $i++) {
-            $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
-            if ($target -eq $expectedTarget) { break }
-            Start-Sleep -Milliseconds 500
+          # 快捷方式不得改动：与旧版安装后的基线逐字节比对（存在性基线处已查）。
+          # COM 读出的 TargetPath 只打印作参考，不参与断言
+          if ((Get-FileHash $lnk -Algorithm SHA256).Hash -ne $lnkHash) {
+            throw '桌面快捷方式被增量安装改动'
           }
-          if ($target -ne $expectedTarget) { throw "桌面快捷方式指向被改动：$target" }
+          try {
+            $targetRef = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
+            Write-Host "快捷方式 TargetPath（参考）：$targetRef"
+          } catch { Write-Host 'COM 读取 TargetPath 失败（忽略，仅参考）' }
           Write-Host '增量包冒烟通过'
 
           # 卸载清理（增量安装器刻意不碰卸载器/快捷方式）；卸载器会自我复制到

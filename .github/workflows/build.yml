@@ -477,13 +477,19 @@ jobs:
             throw "InstallLocation 被改动：$($reg.InstallLocation)"
           }
 
-          # 快捷方式不得改动：仍指向原安装目录
+          # 快捷方式不得改动：仍指向原安装目录。
+          # WScript.Shell 读刚写入的 lnk 在 runner 上偶发返回空 TargetPath
+          # （Defender/索引扫描临时占用），按上面哈希校验同款模式轮询重试
           $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) '狒狒格式工具箱.lnk'
           if (-not (Test-Path $lnk)) { throw "桌面快捷方式丢失：$lnk" }
-          $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
-          if ($target -ne (Join-Path $dir 'FFGui.exe')) {
-            throw "桌面快捷方式指向被改动：$target"
+          $expectedTarget = Join-Path $dir 'FFGui.exe'
+          $target = $null
+          for ($i = 0; $i -lt 20; $i++) {
+            $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
+            if ($target -eq $expectedTarget) { break }
+            Start-Sleep -Milliseconds 500
           }
+          if ($target -ne $expectedTarget) { throw "桌面快捷方式指向被改动：$target" }
           Write-Host '增量包冒烟通过'
 
           # 卸载清理（增量安装器刻意不碰卸载器/快捷方式）；卸载器会自我复制到

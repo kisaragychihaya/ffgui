@@ -61,6 +61,13 @@ node scripts/build-delta.cjs \
   → 只更新 `DisplayVersion` 与 `EstimatedSize`（`InstallLocation`/快捷方式/卸载器不动）
   → 写 `$INSTDIR\delta-update.log`（ANSI/系统代码页）→ 静默模式重启应用，非静默弹窗。
 - 退出码：成功 0，失败非 0；`/S` 由客户端自动更新调用，不带参数运行也会执行并在结束时弹窗。
+  追加 `/NORELAUNCH` 时静默成功后不重启应用——跨版本链式更新的每一跳都由客户端生成的
+  `delta-chain-<版本>.ps1` 编排（逐跳 `/S /NORELAUNCH`、退出码非 0 即中断，末尾统一
+  拉起应用），中间版本若自启，其更新器会与正在运行的链竞争。
+- 客户端跨版本链式更新（main/updater.js `resolveDeltaChain`）：最新版 delta 清单的
+  `fromVersion` 不等于当前版本时，拉 Release 列表，把中间各版清单的 `fromVersion`
+  首尾相接拼到最新版（只有首跳能核对本地 `sourceSha256`，后续跳靠 xdelta3 目标校验和
+  自验）；任一环节缺失/不符即回退全量安装包，与现有兜底同一出口。
 - CI 步骤：查上一个正式 Release（非 draft/prerelease）→ 下载其 `FFGui-windows-<arch>.7z`
   与 `FFGui-<旧版本>-<arch>-Setup.exe`、下载 xdelta3（资产实名
   `xdelta3-3.1.0-x86_64.exe.zip`，解压后重命名）→ 生成 → x64 额外跑冒烟

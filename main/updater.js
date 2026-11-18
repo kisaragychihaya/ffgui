@@ -4,6 +4,10 @@
 // 查 GitHub Release → 判定 delta 增量包是否适用 → 自动下载（断点续传 + sha256 校验）
 // → 用户确认后静默运行安装包并退出。状态经 'ffgui:updater-event' 广播给所有窗口。
 //
+// 跨版本时走链式增量：逐个抓取中间各 Release 的 delta 清单，把 fromVersion 首尾相接
+// 拼到最新版（任一环节缺失/不符即回退完整安装包）；全部下载后生成 PowerShell 脚本
+// 逐跳静默安装（中间跳带 /NORELAUNCH 不拉起应用），脚本最后统一重启应用。
+//
 // 安装目录取 app.getPath('exe') 所在目录：NSIS 按用户安装到
 // %LOCALAPPDATA%\Programs\<产品名>，与卸载注册表项 InstallLocation 指向同一目录。
 const { app, BrowserWindow, ipcMain } = require('electron');
@@ -15,24 +19,30 @@ const { pipeline } = require('stream');
 const { spawn } = require('child_process');
 
 const RELEASE_API = 'https://api.github.com/repos/kisaragychihaya/ffgui/releases/latest';
+const RELEASES_API = 'https://api.github.com/repos/kisaragychihaya/ffgui/releases?per_page=100';
 const EVENT_CHANNEL = 'ffgui:updater-event';
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 自动检查最短间隔：4 小时
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 30000;
 const DOWNLOAD_TIMEOUT_MS = 60000;
+const MAX_CHAIN_HOPS = 8; // 链式增量最多连续跳的版本数，超出回退完整安装包
 
-// 启动清理：上次下载遗留的增量包 / 全量安装包 / 半成品 / 清单。
+// 启动清理：上次下载遗留的增量包 / 全量安装包 / 半成品 / 清单 / 链式安装脚本。
 // 保留 pending.json 指向的已下载包（「稍后」后下次启动仍提示）。
 const STALE_PATTERNS = [
   /^delta-update-.+\.exe$/i,
   /^delta-update-.+\.json$/i,
+  /^delta-chain-.+\.ps1$/i,
   /\.partial$/i,
   /^FFGui-.+-Setup\.exe$/i,
 ];
 
 let initialized = false;
 let current = { state: 'none' }; // 最近一次推送的状态（payload 契约见任务说明）
-let pending = null; // 已下载待安装：{ version, apply, file }
+// 已下载待安装：{ version, apply, file }；
+// 链式增量另有 files: [{ file, version, fromVersion, sha256 }]（按安装顺序，
+// file 恒等于最后一跳的 file，兼容单跳读取逻辑）
+let pending = null;
 let activeDownload = null; // 下载中的任务，防止重复触发
 let checking = false;
 
@@ -208,13 +218,38 @@ function loadPending() {
   const inDir = file && path.dirname(file) === path.resolve(updatesDir());
   const newer = meta && compareVersions(meta.version, app.getVersion()) > 0;
   const modeOk = meta && (meta.apply === 'delta' || meta.apply === 'full');
-  if (!inDir || !newer || !modeOk || !fs.existsSync(file)) {
-    // 已装上（版本不再更新）或文件丢失：标记与残留包都没用了
-    try {
-      fs.rmSync(pendingMetaPath(), { force: true });
-    } catch {
-      // 忽略
+  // 链式增量：逐跳校验（路径必须都在更新目录内、文件都在、末跳版本等于目标版本）
+  let chain = null;
+  if (modeOk && Array.isArray(meta.files) && meta.files.length > 1) {
+    chain = [];
+    for (const hop of meta.files) {
+      const hopFile = hop && typeof hop.file === 'string' ? path.resolve(hop.file) : '';
+      const hopOk = hopFile
+        && path.dirname(hopFile) === path.resolve(updatesDir())
+        && typeof hop.version === 'string'
+        && typeof hop.fromVersion === 'string'
+        && isSha256(hop.sha256)
+        && fs.existsSync(hopFile);
+      if (!hopOk) {
+        chain = null;
+        break;
+      }
+      chain.push({
+        file: hopFile,
+        version: hop.version,
+        fromVersion: hop.fromVersion,
+        sha256: hop.sha256,
+      });
     }
+    const last = chain && chain[chain.length - 1];
+    if (!last || normalizeVersion(last.version) !== normalizeVersion(meta.version) || last.file !== file) {
+      chain = null;
+    }
+  }
+  const chainBroken = Array.isArray(meta && meta.files) && meta.files.length > 1 && !chain;
+  if (!inDir || !newer || !modeOk || !fs.existsSync(file) || chainBroken) {
+    // 已装上（版本不再更新）、文件丢失或链损坏：标记与残留包都没用了
+    clearPendingMeta();
     if (inDir) {
       try {
         fs.rmSync(file, { force: true });
@@ -225,8 +260,17 @@ function loadPending() {
     return;
   }
   pending = { version: meta.version, apply: meta.apply, file };
+  if (chain) pending.files = chain;
   current = { state: 'downloaded', version: pending.version, apply: pending.apply };
   console.log(`[ffgui] 发现已下载的更新包: ${path.basename(file)}`);
+}
+
+function clearPendingMeta() {
+  try {
+    fs.rmSync(pendingMetaPath(), { force: true });
+  } catch {
+    // 忽略
+  }
 }
 
 function savePending(meta) {
@@ -238,10 +282,14 @@ function savePending(meta) {
   }
 }
 
-// 删除没用的安装包；keepFile 为已下载待安装的包
-function cleanupDownloads(keepFile) {
+// 删除没用的安装包；keepFiles 为已下载待安装的包（链式增量是一组）
+function cleanupDownloads(keepFiles) {
   ensureUpdatesDir();
-  const keep = keepFile ? path.resolve(keepFile) : '';
+  const keeps = new Set(
+    (Array.isArray(keepFiles) ? keepFiles : [keepFiles])
+      .filter(Boolean)
+      .map((f) => path.resolve(f)),
+  );
   let entries = [];
   try {
     entries = fs.readdirSync(updatesDir());
@@ -252,7 +300,7 @@ function cleanupDownloads(keepFile) {
   let removed = 0;
   for (const name of entries) {
     const full = path.join(updatesDir(), name);
-    if (keep && path.resolve(full) === keep) continue;
+    if (keeps.has(path.resolve(full))) continue;
     if (!STALE_PATTERNS.some((re) => re.test(name))) continue;
     try {
       fs.rmSync(full, { force: true });
@@ -262,6 +310,13 @@ function cleanupDownloads(keepFile) {
     }
   }
   if (removed > 0) console.log(`[ffgui] 已清理 ${removed} 个旧的更新文件`);
+}
+
+// pending 指向的全部待安装文件（链式增量为逐跳列表，单跳/全量为单元素）
+function pendingFiles() {
+  if (!pending) return [];
+  if (Array.isArray(pending.files)) return pending.files.map((hop) => hop.file);
+  return pending.file ? [pending.file] : [];
 }
 
 // ---------- HTTP ----------
@@ -478,7 +533,107 @@ async function loadManifest(assets, version, arch) {
   }
 }
 
+// 跨版本链式增量解析：从当前版本出发，用各 Release 的 delta 清单把
+// fromVersion 首尾相接拼到最新版。任一环节缺失/不符（旧版没有 delta 资产、
+// 链条断裂、清单非法、首跳本地文件哈希不符……）都返回 null，调用方回退完整包。
+// 只有第一跳能核对本地源文件哈希；后续跳的源文件哈希由 xdelta3 在应用时自验
+// （补丁尾部带目标校验和，源不符会解码失败并中断，安装目录停在最后一个一致版本）。
+async function resolveDeltaChain(options) {
+  const { latest, arch, installDir: baseDir, latestManifest, latestAssets } = options;
+  const from = normalizeVersion(options.currentVersion);
+  const hopOf = (manifest, assets, fromVersion) => {
+    const asset = findAsset(assets, manifest.package);
+    return asset ? { version: manifest.version, fromVersion, asset, sha256: manifest.packageSha256 } : null;
+  };
+
+  // 最新版没有 delta 清单时链必然拼不成（末跳缺失），不必再拉 Release 列表
+  if (!latestManifest) return null;
+
+  // 单跳直达：最新版清单的 fromVersion 就是当前版本
+  if (normalizeVersion(latestManifest.version) === latest
+    && await isDeltaApplicable(latestManifest, { currentVersion: from, arch, installDir: baseDir })) {
+    const hop = hopOf(latestManifest, latestAssets, from);
+    return hop ? { hops: [hop] } : null;
+  }
+  console.log('[ffgui] 最新版增量清单不直抵当前版本，尝试拼跨版本增量链');
+
+  let releases;
+  try {
+    releases = await fetchJson(RELEASES_API);
+  } catch (err) {
+    console.log(`[ffgui] 获取 Release 列表失败，无法拼增量链: ${err.message}`);
+    return null;
+  }
+  if (!Array.isArray(releases)) return null;
+  const candidates = [];
+  for (const rel of releases) {
+    if (!rel || rel.draft || rel.prerelease) continue;
+    const v = normalizeVersion(rel.tag_name);
+    if (!v) continue;
+    if (compareVersions(v, from) <= 0 || compareVersions(v, latest) > 0) continue;
+    candidates.push({ version: v, assets: Array.isArray(rel.assets) ? rel.assets : [] });
+  }
+  // 按版本升序走链：每跳取大于当前的最小候选（发布历史是线性的）
+  candidates.sort((a, b) => compareVersions(a.version, b.version));
+
+  const hops = [];
+  let v = from;
+  while (compareVersions(v, latest) < 0) {
+    if (hops.length >= MAX_CHAIN_HOPS) {
+      console.log(`[ffgui] 增量链超过 ${MAX_CHAIN_HOPS} 跳，回退完整安装包`);
+      return null;
+    }
+    const cand = candidates.find((c) => compareVersions(c.version, v) > 0);
+    if (!cand) return null;
+    const manifest = cand.version === latest && latestManifest
+      ? latestManifest
+      : await loadManifest(cand.assets, cand.version, arch);
+    if (!manifest || manifest.schema !== 1) return null;
+    if (normalizeVersion(manifest.version) !== cand.version) return null;
+    if (normalizeVersion(manifest.fromVersion) !== v) return null; // 链条必须严格衔接
+    if (String(manifest.arch || '') !== String(arch || '')) return null;
+    if (!isSafeRelativePath(manifest.package) || !isSha256(manifest.packageSha256)) return null;
+    if (hops.length === 0) {
+      const usable = await isDeltaApplicable(manifest, { currentVersion: from, arch, installDir: baseDir });
+      if (!usable) return null;
+    }
+    const hop = hopOf(manifest, cand.assets, v);
+    if (!hop) return null;
+    hops.push(hop);
+    v = cand.version;
+  }
+  return hops.length ? { hops } : null;
+}
+
 // ---------- 下载流程 ----------
+
+// 下载 + sha256 校验（校验失败删包重下一次），返回目标路径；仍失败抛错
+async function downloadVerified(asset, expectedSha256, onProgress) {
+  const target = path.join(updatesDir(), path.basename(asset.name));
+  await downloadAsset(asset.url, target, onProgress);
+  let ok = await verifyFile(target, expectedSha256);
+  if (!ok) {
+    console.log('[ffgui] 更新包校验失败，重新下载');
+    fs.rmSync(target, { force: true });
+    await downloadAsset(asset.url, target, onProgress);
+    ok = await verifyFile(target, expectedSha256);
+    if (!ok) {
+      fs.rmSync(target, { force: true });
+      throw Object.assign(new Error('更新包校验失败'), { code: 'FFGUI_UPDATE_VERIFY' });
+    }
+  }
+  return target;
+}
+
+function downloadFailed(err) {
+  activeDownload = null;
+  const code = err && err.code === 'FFGUI_UPDATE_VERIFY'
+    ? 'FFGUI_UPDATE_VERIFY'
+    : 'FFGUI_UPDATE_NETWORK';
+  console.log(`[ffgui] 更新包下载失败: ${err.message}`);
+  // 保留 .partial 便于下次检查时带 Range 续传
+  emit({ state: 'error', error: code });
+}
 
 async function startDownload({ version, kind, asset, expectedSha256 }) {
   ensureUpdatesDir();
@@ -495,32 +650,51 @@ async function startDownload({ version, kind, asset, expectedSha256 }) {
   };
   emit({ state: 'downloading', version, apply: kind, progress: 0 });
   try {
-    await downloadAsset(asset.url, target, onProgress);
-    let ok = await verifyFile(target, expectedSha256);
-    if (!ok) {
-      // 校验失败：删掉重下一次，仍失败才报错
-      console.log('[ffgui] 更新包校验失败，重新下载');
-      fs.rmSync(target, { force: true });
-      await downloadAsset(asset.url, target, onProgress);
-      ok = await verifyFile(target, expectedSha256);
-      if (!ok) {
-        fs.rmSync(target, { force: true });
-        throw Object.assign(new Error('更新包校验失败'), { code: 'FFGUI_UPDATE_VERIFY' });
-      }
-    }
+    await downloadVerified(asset, expectedSha256, onProgress);
     pending = { version, apply: kind, file: target };
     savePending({ version, apply: kind, file: target });
     activeDownload = null;
     console.log(`[ffgui] 更新包下载完成: ${path.basename(target)}`);
     emit({ state: 'downloaded', version, apply: kind });
   } catch (err) {
+    downloadFailed(err);
+  }
+}
+
+// 链式增量：逐跳下载校验，进度按跳数均摊；全部就绪后一次性写入 pending
+async function startChainDownload({ version, hops }) {
+  ensureUpdatesDir();
+  activeDownload = { version, kind: 'delta', target: '' };
+  emit({ state: 'downloading', version, apply: 'delta', progress: 0 });
+  const files = [];
+  try {
+    for (let i = 0; i < hops.length; i += 1) {
+      const hop = hops[i];
+      const onProgress = (bytes, total) => {
+        const part = total > 0 ? Math.min(1, bytes / total) : 0;
+        const progress = (i + part) / hops.length;
+        emit({
+          state: 'downloading',
+          version,
+          apply: 'delta',
+          progress: Number(progress.toFixed(4)),
+        });
+      };
+      const target = await downloadVerified(hop.asset, hop.sha256, onProgress);
+      files.push({
+        file: target,
+        version: hop.version,
+        fromVersion: hop.fromVersion,
+        sha256: hop.sha256,
+      });
+    }
+    pending = { version, apply: 'delta', file: files[files.length - 1].file, files };
+    savePending(pending);
     activeDownload = null;
-    const code = err && err.code === 'FFGUI_UPDATE_VERIFY'
-      ? 'FFGUI_UPDATE_VERIFY'
-      : 'FFGUI_UPDATE_NETWORK';
-    console.log(`[ffgui] 更新包下载失败: ${err.message}`);
-    // 保留 .partial 便于下次检查时带 Range 续传
-    emit({ state: 'error', error: code });
+    console.log(`[ffgui] 链式增量包下载完成：${files.length} 跳，目标 ${version}`);
+    emit({ state: 'downloaded', version, apply: 'delta' });
+  } catch (err) {
+    downloadFailed(err);
   }
 }
 
@@ -556,31 +730,27 @@ async function checkForUpdates(manual = false) {
     const arch = process.arch;
     const assets = Array.isArray(release.assets) ? release.assets : [];
     const manifest = await loadManifest(assets, latest, arch);
-    let deltaUsable = false;
-    if (manifest && normalizeVersion(manifest.version) === latest) {
-      deltaUsable = await isDeltaApplicable(manifest, {
-        currentVersion: app.getVersion(),
-        arch,
-        installDir: installDir(),
-      });
-    }
+    const chain = await resolveDeltaChain({
+      latest,
+      arch,
+      currentVersion: app.getVersion(),
+      installDir: installDir(),
+      latestManifest: manifest,
+      latestAssets: assets,
+    });
 
-    if (deltaUsable) {
-      const asset = findAsset(assets, manifest.package);
-      if (asset) {
-        console.log('[ffgui] 增量包适用，开始下载 delta');
-        await startDownload({
-          version: latest,
-          kind: 'delta',
-          asset,
-          expectedSha256: manifest.packageSha256,
-        });
-        return current;
-      }
-      console.log('[ffgui] 清单指向的增量包不存在，改用完整安装包');
-    } else {
-      console.log('[ffgui] 增量包不适用，改用完整安装包');
+    if (chain && chain.hops.length === 1) {
+      console.log('[ffgui] 增量包适用，开始下载 delta');
+      const hop = chain.hops[0];
+      await startDownload({ version: latest, kind: 'delta', asset: hop.asset, expectedSha256: hop.sha256 });
+      return current;
     }
+    if (chain) {
+      console.log(`[ffgui] 跨版本链式增量：${app.getVersion()} -> ${chain.hops.map((h) => h.version).join(' -> ')}`);
+      await startChainDownload({ version: latest, hops: chain.hops });
+      return current;
+    }
+    console.log('[ffgui] 增量包不适用，改用完整安装包');
 
     const fullName = manifest && typeof manifest.fullSetup === 'string' ? manifest.fullSetup : '';
     const fullAsset = findAsset(assets, fullName) || findFullAsset(assets, latest, arch);
@@ -601,6 +771,75 @@ async function checkForUpdates(manual = false) {
 
 // ---------- 安装 ----------
 
+// 启动安装进程，确认起来后再退出应用（避免 spawn 失败但应用已关）
+function spawnAndQuit(file, args, extraOptions) {
+  let child = null;
+  try {
+    child = spawn(file, args, { detached: true, stdio: 'ignore', ...(extraOptions || {}) });
+  } catch (err) {
+    console.log(`[ffgui] 启动安装程序失败: ${err.message}`);
+    emit({ state: 'error', error: 'FFGUI_UPDATE_SPAWN' });
+    return;
+  }
+  child.on('error', (err) => {
+    console.log(`[ffgui] 安装程序启动失败: ${err.message}`);
+    emit({ state: 'error', error: 'FFGUI_UPDATE_SPAWN' });
+  });
+  child.once('spawn', () => {
+    child.unref();
+    console.log('[ffgui] 安装程序已启动，退出应用');
+    app.quit();
+  });
+}
+
+// PowerShell 单引号字符串转义
+function psQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+// 链式安装脚本：逐跳静默安装，全部带 /NORELAUNCH（由脚本统一编排，中间版本
+// 不得启动——它的更新器会与链竞争）；任一跳退出码非 0 即中断，应用停在最后一个
+// 一致版本；全部成功后脚本拉起应用本身
+function buildChainScript(hops, exePath) {
+  const lines = ["$ErrorActionPreference = 'Stop'"];
+  for (const hop of hops) {
+    lines.push(`$p = Start-Process -FilePath ${psQuote(hop.file)} -ArgumentList '/S','/NORELAUNCH' -Wait -PassThru`);
+    lines.push('if ($p.ExitCode -ne 0) { exit $p.ExitCode }');
+  }
+  lines.push(`Start-Process -FilePath ${psQuote(exePath)}`);
+  lines.push('exit 0');
+  return `${lines.join('\r\n')}\r\n`;
+}
+
+// 生成链式安装脚本，返回脚本路径；链与当前版本对不上（如上次中断后续装失败）
+// 或文件缺失时作废 pending 并返回 ''。脚本以带 BOM 的 UTF-8 写入：路径含中文
+// （更新目录在 %APPDATA%\<产品名> 下），无 BOM 时 Windows PowerShell 按 ANSI 解析会乱码
+function prepareChainScript() {
+  const currentVersion = normalizeVersion(app.getVersion());
+  // 断链续装：跳过已装上的跳（上次安装中断后重进，剩余链必须正好从当前版本出发）
+  const remaining = pending.files.filter((hop) => compareVersions(hop.version, currentVersion) > 0);
+  const first = remaining[0];
+  const broken = !first
+    || normalizeVersion(first.fromVersion) !== currentVersion
+    || remaining.some((hop) => !fs.existsSync(hop.file));
+  if (broken) {
+    console.log('[ffgui] 增量链与当前版本不匹配或文件缺失，作废待安装包');
+    pending = null;
+    clearPendingMeta();
+    emit({ state: 'error', error: 'FFGUI_UPDATE_CHAIN' });
+    return '';
+  }
+  const scriptPath = path.join(updatesDir(), `delta-chain-${pending.version}.ps1`);
+  try {
+    fs.writeFileSync(scriptPath, '﻿' + buildChainScript(remaining, app.getPath('exe')), 'utf8');
+  } catch (err) {
+    console.log(`[ffgui] 写入链式安装脚本失败: ${err.message}`);
+    emit({ state: 'error', error: 'FFGUI_UPDATE_SPAWN' });
+    return '';
+  }
+  return scriptPath;
+}
+
 function applyUpdate() {
   if (!pending || !pending.file || !fs.existsSync(pending.file)) {
     console.log('[ffgui] 没有已下载的更新包，无法安装');
@@ -619,24 +858,17 @@ function applyUpdate() {
   }
 
   emit({ state: 'applying', version: pending.version, apply: pending.apply });
-  let child = null;
-  try {
-    child = spawn(pending.file, ['/S'], { detached: true, stdio: 'ignore' });
-  } catch (err) {
-    console.log(`[ffgui] 启动安装程序失败: ${err.message}`);
-    emit({ state: 'error', error: 'FFGUI_UPDATE_SPAWN' });
+  // 链式增量：脚本逐跳安装；单跳 delta / 全量包：直接静默运行安装包
+  if (pending.apply === 'delta' && Array.isArray(pending.files) && pending.files.length > 1) {
+    const scriptPath = prepareChainScript();
+    if (scriptPath) {
+      spawnAndQuit('powershell.exe', [
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath,
+      ], { windowsHide: true });
+    }
     return current;
   }
-  child.on('error', (err) => {
-    console.log(`[ffgui] 安装程序启动失败: ${err.message}`);
-    emit({ state: 'error', error: 'FFGUI_UPDATE_SPAWN' });
-  });
-  // 进程真的起来了再退出，避免 spawn 失败后应用已经关掉
-  child.once('spawn', () => {
-    child.unref();
-    console.log('[ffgui] 安装程序已启动，退出应用');
-    app.quit();
-  });
+  spawnAndQuit(pending.file, ['/S']);
   return current;
 }
 
@@ -660,7 +892,7 @@ function init() {
   initialized = true;
   ensureUpdatesDir();
   loadPending();
-  cleanupDownloads(pending && pending.file);
+  cleanupDownloads(pendingFiles());
   registerUpdaterIpc();
   checkForUpdates(false).catch((err) => {
     console.log(`[ffgui] 自动检查更新失败: ${err.message}`);
@@ -676,6 +908,10 @@ module.exports = {
   normalizeVersion,
   compareVersions,
   isDeltaApplicable,
+  resolveDeltaChain,
+  buildChainScript,
   cleanupDownloads,
   RELEASE_API,
+  RELEASES_API,
+  MAX_CHAIN_HOPS,
 };

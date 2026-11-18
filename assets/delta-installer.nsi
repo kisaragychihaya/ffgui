@@ -7,7 +7,8 @@
 ;     绝不重新推导/覆盖，快捷方式一律不动；
 ;   - 先补丁（ApplyPatch）后全量覆盖（ApplyCopy），最后删旧文件（ApplyRemove）；
 ;   - 补丁阶段任何失败都在小文件覆盖前退出，安装目录仍处于旧版可用状态；
-;   - 静默（/S）成功后退回码 0 并重启应用，失败非 0；不带参数时用 MessageBox 报结果。
+;   - 静默（/S）成功后退回码 0 并重启应用（/NORELAUNCH 时不重启，供链式更新编排），
+;     失败非 0；不带参数时用 MessageBox 报结果。
 ;
 ; 本文件含中文注释，makensis 只认带 BOM 的 UTF-8，因此 build-delta.cjs 编译前会
 ; 复制本文件并补 BOM，同时通过 GEN_DEFINES 注入版本、路径与 delta-files.nsh 位置。
@@ -200,9 +201,16 @@ Section "Delta"
     StrCpy $LogReady 0
   ${EndIf}
 
-  ; 8. 静默模式重启应用；非静默显示结果
+  ; 8. 静默模式重启应用；非静默显示结果。
+  ; /NORELAUNCH：跨版本链式更新的每一跳都由外层 PowerShell 脚本统一编排并负责
+  ; 最后拉起应用，安装器自己不得重启（否则中间版本启动后其更新器会与链竞争）
   ${If} ${Silent}
-    Exec '"$INSTDIR\${APP_EXE}"'
+    ${GetParameters} $R0
+    ClearErrors
+    ${GetOptions} $R0 "/NORELAUNCH" $R1
+    ${If} ${Errors}
+      Exec '"$INSTDIR\${APP_EXE}"'
+    ${EndIf}
   ${Else}
     MessageBox MB_ICONINFORMATION "增量更新完成：${FROM_VERSION} -> ${APP_VERSION}$\r$\n$\r$\n应用未自动启动，请手动打开。"
   ${EndIf}

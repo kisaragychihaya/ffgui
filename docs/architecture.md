@@ -15,6 +15,13 @@ main/updater.js     应用自动更新（仅 win32 + app.isPackaged，其他平�
                     GitHub Release 检查（4 小时自动检查限频，last-check.json 持久化）、
                     delta 适用性判定（manifest 契约见下节）、断点续传下载（.partial +
                     Range）、sha256 校验（增量包，失败重下一次）、静默安装（spawn /S）。
+                    跨版本时按各 Release 的 delta 清单把 fromVersion 逐跳拼链
+                    （resolveDeltaChain，任一环节缺失/不符回退全量包，上限 8 跳）；
+                    链式安装生成 delta-chain-<版本>.ps1 由 powershell 逐跳跑
+                    （每跳 /S /NORELAUNCH 抑制中间版本自启，末尾统一拉起应用；
+                    脚本带 BOM 的 UTF-8——路径含中文）。pending.json 记 files 逐跳
+                    列表，中断续装时跳过已装上的跳，剩余链与当前版本对不上则作废
+                    并报 FFGUI_UPDATE_CHAIN。
                     IPC ffgui:updater-check / updater-state / updater-apply，事件通道
                     ffgui:updater-event；启动清理 userData/updates/ 下旧的安装包与半成品
 main/taskgate.js    窗口关闭拦截的任务聚合层：isBusy() 汇总 ffmpeg 任务 / 录屏写盘 / 光盘 /

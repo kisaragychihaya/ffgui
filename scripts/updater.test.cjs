@@ -19,6 +19,7 @@ const { Readable } = require('node:stream');
 const repo = path.resolve(__dirname, '..');
 const UPDATER_SOURCE = fs.readFileSync(path.join(repo, 'main', 'updater.js'), 'utf8');
 const RELEASE_API = 'https://api.github.com/repos/kisaragychihaya/ffgui/releases/latest';
+const RELEASES_API = 'https://api.github.com/repos/kisaragychihaya/ffgui/releases?per_page=100';
 
 const ALLOWED_STATES = new Set([
   'none', 'checking', 'available', 'downloading', 'downloaded', 'applying', 'error',
@@ -216,15 +217,24 @@ function makeDeltaManifest(installDir, overrides = {}) {
 function deltaReleaseHttps(manifest, deltaBody, fullBody = 'full-setup') {
   const deltaRequests = [];
   const fullRequests = [];
+  const releaseAssets = [
+    asset(`delta-update-${manifest.version}-${manifest.arch}.json`, 'https://dl.example.com/manifest.json'),
+    asset(manifest.package, 'https://dl.example.com/delta.exe'),
+    asset(manifest.fullSetup, 'https://dl.example.com/full.exe'),
+  ];
   const https = fakeHttps((record, cb) => {
     if (record.url === RELEASE_API) {
       cb(fakeResponse({
         statusCode: 200,
-        body: releaseBody(manifest.version, [
-          asset(`delta-update-${manifest.version}-${manifest.arch}.json`, 'https://dl.example.com/manifest.json'),
-          asset(manifest.package, 'https://dl.example.com/delta.exe'),
-          asset(manifest.fullSetup, 'https://dl.example.com/full.exe'),
-        ]),
+        body: releaseBody(manifest.version, releaseAssets),
+      }));
+      return;
+    }
+    if (record.url === RELEASES_API) {
+      // 跨版本拼链时的列表请求：只回最新版自身（链拼不成则回退全量）
+      cb(fakeResponse({
+        statusCode: 200,
+        body: JSON.stringify([{ tag_name: `v${manifest.version}`, assets: releaseAssets }]),
       }));
       return;
     }
@@ -779,4 +789,266 @@ test('非 Windows 或未打包：init 不注册 IPC、不检查更新', () => {
   assert.equal(linux.handlers.size, 0);
   assert.equal(linux.events.length, 0);
   assert.equal(linux.api.getState().state, 'none');
+});
+
+// ---------- 跨版本链式增量 ----------
+
+// 两跳链式环境：当前 0.7.4，中间版 0.7.5，最新 0.8.0
+function chainReleaseHttps(installDir, options = {}) {
+  const midBody = options.midBody || 'delta-0.7.5-bytes';
+  const latestBody = options.latestBody || 'delta-0.8.0-bytes';
+  const fullBody = options.fullBody || 'full-setup';
+  const midManifest = makeDeltaManifest(installDir, {
+    version: '0.7.5',
+    fromVersion: '0.7.4',
+    package: 'delta-update-0.7.5-x64.exe',
+    packageSha256: sha256(midBody),
+  });
+  const latestManifest = makeDeltaManifest(installDir, {
+    version: '0.8.0',
+    fromVersion: '0.7.5',
+    package: 'delta-update-0.8.0-x64.exe',
+    packageSha256: sha256(latestBody),
+  });
+  const midAssets = options.midWithDelta === false
+    ? [asset('FFGui-0.7.5-x64-Setup.exe', 'https://dl.example.com/full-0.7.5.exe')]
+    : [
+      asset('delta-update-0.7.5-x64.json', 'https://dl.example.com/manifest-0.7.5.json'),
+      asset(midManifest.package, 'https://dl.example.com/delta-0.7.5.exe'),
+      asset('FFGui-0.7.5-x64-Setup.exe', 'https://dl.example.com/full-0.7.5.exe'),
+    ];
+  const latestAssets = [
+    asset('delta-update-0.8.0-x64.json', 'https://dl.example.com/manifest-0.8.0.json'),
+    asset(latestManifest.package, 'https://dl.example.com/delta-0.8.0.exe'),
+    asset('FFGui-0.8.0-x64-Setup.exe', 'https://dl.example.com/full.exe'),
+  ];
+  const fullRequests = [];
+  const https = fakeHttps((record, cb) => {
+    if (record.url === RELEASE_API) {
+      cb(fakeResponse({ statusCode: 200, body: releaseBody('0.8.0', latestAssets) }));
+      return;
+    }
+    if (record.url === RELEASES_API) {
+      cb(fakeResponse({
+        statusCode: 200,
+        body: JSON.stringify([
+          { tag_name: 'v0.8.0', assets: latestAssets },
+          { tag_name: 'v0.7.5', assets: midAssets },
+        ]),
+      }));
+      return;
+    }
+    if (record.url.endsWith('/manifest-0.7.5.json')) {
+      cb(fakeResponse({ statusCode: 200, body: JSON.stringify(midManifest) }));
+      return;
+    }
+    if (record.url.endsWith('/manifest-0.8.0.json')) {
+      cb(fakeResponse({ statusCode: 200, body: JSON.stringify(latestManifest) }));
+      return;
+    }
+    if (record.url.endsWith('/delta-0.7.5.exe')) {
+      cb(fakeResponse({
+        statusCode: 200,
+        headers: { 'content-length': String(Buffer.byteLength(midBody)) },
+        body: midBody,
+      }));
+      return;
+    }
+    if (record.url.endsWith('/delta-0.8.0.exe')) {
+      cb(fakeResponse({
+        statusCode: 200,
+        headers: { 'content-length': String(Buffer.byteLength(latestBody)) },
+        body: latestBody,
+      }));
+      return;
+    }
+    fullRequests.push(record);
+    cb(fakeResponse({
+      statusCode: 200,
+      headers: { 'content-length': String(Buffer.byteLength(fullBody)) },
+      body: fullBody,
+    }));
+  });
+  return { https, midManifest, latestManifest, fullRequests };
+}
+
+test('链式增量：跨版本逐跳下载，pending 带 files，apply=delta', async () => {
+  const root = tempDir();
+  const installDir = path.join(root, 'install');
+  fs.mkdirSync(installDir, { recursive: true });
+  const { https, midManifest, latestManifest, fullRequests } = chainReleaseHttps(installDir);
+  const h = loadUpdater({ https, root, installDir });
+
+  await h.api.checkForUpdates(true);
+
+  assert.equal(h.api.getState().state, 'downloaded');
+  assert.equal(h.api.getState().apply, 'delta');
+  assert.equal(h.api.getState().version, '0.8.0');
+  assert.equal(fullRequests.length, 0, '链拼得成时不应下载完整包');
+  for (const manifest of [midManifest, latestManifest]) {
+    const target = path.join(h.updatesDir, manifest.package);
+    assert.equal(fs.existsSync(target), true, `${manifest.package} 应已下载`);
+  }
+  const pending = JSON.parse(fs.readFileSync(path.join(h.updatesDir, 'pending.json'), 'utf8'));
+  assert.equal(pending.version, '0.8.0');
+  assert.equal(pending.apply, 'delta');
+  assert.equal(pending.files.length, 2);
+  assert.equal(pending.files[0].fromVersion, '0.7.4');
+  assert.equal(pending.files[1].fromVersion, '0.7.5');
+  assert.equal(pending.file, pending.files[1].file, 'file 恒等于最后一跳');
+  assertAllPayloads(h.events);
+  const downloading = h.events.filter((event) => event.state === 'downloading');
+  assert.equal(downloading[downloading.length - 1].progress, 1, '末跳结束时进度应为 1');
+});
+
+test('链式增量：中间版本缺 delta 清单时断链，回退完整安装包', async () => {
+  const root = tempDir();
+  const installDir = path.join(root, 'install');
+  fs.mkdirSync(installDir, { recursive: true });
+  const { https, fullRequests } = chainReleaseHttps(installDir, { midWithDelta: false });
+  const h = loadUpdater({ https, root, installDir });
+
+  await h.api.checkForUpdates(true);
+
+  assert.equal(h.api.getState().state, 'downloaded');
+  assert.equal(h.api.getState().apply, 'full');
+  assert.equal(fullRequests.length, 1);
+  assert.equal(
+    fs.readFileSync(path.join(h.updatesDir, 'FFGui-0.8.0-x64-Setup.exe'), 'utf8'),
+    'full-setup',
+  );
+  assertAllPayloads(h.events);
+});
+
+test('链式安装：生成逐跳 ps1（每跳 /NORELAUNCH、末尾拉起应用），经 powershell 启动后退出', async () => {
+  const root = tempDir();
+  const installDir = path.join(root, 'install');
+  fs.mkdirSync(installDir, { recursive: true });
+  const { https, midManifest, latestManifest } = chainReleaseHttps(installDir);
+  const h = loadUpdater({ https, root, installDir });
+  await h.api.checkForUpdates(true);
+  assert.equal(h.api.getState().state, 'downloaded');
+
+  h.api.applyUpdate();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(h.spawnCalls.length, 1);
+  const call = h.spawnCalls[0];
+  assert.equal(call.cmd, 'powershell.exe');
+  assert.deepEqual([...call.args].slice(0, 3), ['-NoProfile', '-ExecutionPolicy', 'Bypass']);
+  assert.equal(call.spawnOptions.detached, true);
+  assert.equal(call.spawnOptions.windowsHide, true);
+
+  const scriptPath = call.args[4];
+  assert.match(path.basename(scriptPath), /^delta-chain-0\.8\.0\.ps1$/);
+  const content = fs.readFileSync(scriptPath, 'utf8');
+  assert.equal(content.charCodeAt(0), 0xfeff, '脚本必须带 BOM（路径含中文）');
+  const norelaunchCount = (content.match(/\/NORELAUNCH/g) || []).length;
+  assert.equal(norelaunchCount, 2, '每一跳都要抑制自动重启');
+  assert.ok(content.indexOf(midManifest.package) < content.indexOf(latestManifest.package),
+    '跳的顺序必须是从旧到新');
+  assert.ok(content.includes('Start-Process -FilePath'), '末尾要拉起应用');
+  assert.ok(content.includes('FFGui.exe'));
+  assert.equal(h.quitCalls(), 1);
+  assertAllPayloads(h.events);
+});
+
+// 预写一条两跳链 pending（0.7.4→0.7.5→0.8.0），返回链文件列表
+function seedChainPending(h) {
+  fs.mkdirSync(h.updatesDir, { recursive: true });
+  const files = ['0.7.5', '0.8.0'].map((version, index) => {
+    const file = path.join(h.updatesDir, `delta-update-${version}-x64.exe`);
+    fs.writeFileSync(file, `hop-${version}`);
+    return {
+      file,
+      version,
+      fromVersion: index === 0 ? '0.7.4' : '0.7.5',
+      sha256: sha256(`hop-${version}`),
+    };
+  });
+  fs.writeFileSync(path.join(h.updatesDir, 'pending.json'), JSON.stringify({
+    version: '0.8.0',
+    apply: 'delta',
+    file: files[files.length - 1].file,
+    files,
+  }));
+  fs.writeFileSync(path.join(h.updatesDir, 'last-check.json'), JSON.stringify({ checkedAt: Date.now() }));
+  return files;
+}
+
+test('链式续装：上次中断后重进，已装上的跳被跳过', async () => {
+  // 当前已是 0.7.5（第一跳装完、第二跳失败中断），pending 链是 0.7.4→0.7.5→0.8.0
+  const h = loadUpdater({ currentVersion: '0.7.5' });
+  seedChainPending(h);
+  h.api.init();
+  assert.equal(h.api.getState().state, 'downloaded');
+
+  h.api.applyUpdate();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(h.spawnCalls.length, 1);
+  const content = fs.readFileSync(h.spawnCalls[0].args[4], 'utf8');
+  assert.ok(!content.includes('delta-update-0.7.5-x64.exe'), '已装上的跳不应再跑');
+  assert.ok(content.includes('delta-update-0.8.0-x64.exe'), '剩余跳要继续');
+  assert.equal((content.match(/\/NORELAUNCH/g) || []).length, 1);
+  assert.equal(h.quitCalls(), 1);
+});
+
+test('链式续装：剩余链与当前版本对不上时作废 pending 并报 FFGUI_UPDATE_CHAIN', async () => {
+  // 当前 0.7.6，剩余链的下一跳却要求 0.7.5 —— 对不上，必须作废
+  const h = loadUpdater({ currentVersion: '0.7.6' });
+  fs.mkdirSync(h.updatesDir, { recursive: true });
+  const hopFile = path.join(h.updatesDir, 'delta-update-0.8.0-x64.exe');
+  fs.writeFileSync(hopFile, 'hop-0.8.0');
+  fs.writeFileSync(path.join(h.updatesDir, 'pending.json'), JSON.stringify({
+    version: '0.8.0',
+    apply: 'delta',
+    file: hopFile,
+    files: [
+      {
+        file: path.join(h.updatesDir, 'delta-update-0.7.5-x64.exe'),
+        version: '0.7.5',
+        fromVersion: '0.7.4',
+        sha256: sha256('hop-0.7.5'),
+      },
+      {
+        file: hopFile,
+        version: '0.8.0',
+        fromVersion: '0.7.5',
+        sha256: sha256('hop-0.8.0'),
+      },
+    ],
+  }));
+  // 第一跳文件不存在没关系：loadPending 要求所有跳文件都在，补一个
+  fs.writeFileSync(path.join(h.updatesDir, 'delta-update-0.7.5-x64.exe'), 'hop-0.7.5');
+  fs.writeFileSync(path.join(h.updatesDir, 'last-check.json'), JSON.stringify({ checkedAt: Date.now() }));
+  h.api.init();
+  assert.equal(h.api.getState().state, 'downloaded');
+
+  h.api.applyUpdate();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(h.lastEvent().state, 'error');
+  assert.equal(h.lastEvent().error, 'FFGUI_UPDATE_CHAIN');
+  assert.equal(h.spawnCalls.length, 0, '链损坏不得启动任何安装');
+  assert.equal(fs.existsSync(path.join(h.updatesDir, 'pending.json')), false, 'pending 标记要清掉');
+  assert.equal(h.quitCalls(), 0);
+});
+
+test('启动清理：链式 pending 的所有跳保留，过期脚本与旧包删除', () => {
+  const h = loadUpdater();
+  const files = seedChainPending(h);
+  fs.writeFileSync(path.join(h.updatesDir, 'delta-chain-0.8.0.ps1'), 'old-script');
+  fs.writeFileSync(path.join(h.updatesDir, 'delta-update-0.7.4-x64.exe'), 'stale');
+
+  h.api.init();
+
+  for (const hop of files) {
+    assert.equal(fs.existsSync(hop.file), true, `${path.basename(hop.file)} 必须保留`);
+  }
+  assert.equal(fs.existsSync(path.join(h.updatesDir, 'delta-chain-0.8.0.ps1')), false,
+    '过期链式脚本要清理');
+  assert.equal(fs.existsSync(path.join(h.updatesDir, 'delta-update-0.7.4-x64.exe')), false);
+  assert.equal(h.api.getState().state, 'downloaded');
+  assert.equal(h.api.getState().apply, 'delta');
 });
